@@ -11,7 +11,7 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 | S1 | Delta schemas + `config` + `acls.json` | ✅ done |
 | S2 | `nb_01_metadata_delta` (scan/change/delete) | ✅ done |
 | S3 | `nb_02_create_search_index` | ✅ done |
-| S4 | `nb_03_ingest_to_index` (core) | ⬜ pending |
+| S4 | `nb_03_ingest_to_index` (core) | ✅ done |
 | S5 | ACL drift + delete purge + bounded parallelism | ⬜ pending |
 | S6 | Pipelines + docs | ⬜ pending |
 
@@ -25,6 +25,19 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
   - Note: bucket region is **us-east-2** (initial us-east-1 URL returned a 301).
 
 ## Changelog
+
+### Sprint 4 — nb_03_ingest_to_index (core ingestion)
+- Added `notebooks/nb_03_ingest_to_index.ipynb`: works the `file_metadata` status queue end-to-end.
+  - Claims `new`/`changed`/`reingest`/`error` rows (`pending`→`ingesting`) below `max_retries`.
+  - ACL gate via efficient nearest-ancestor resolver over `acls.json` (+ `acl_bypass_enabled`),
+    stamping `allowed_groups` on every chunk for security trimming.
+  - Extension pre-filter → Document Intelligence extract → page-aware chunking → Azure OpenAI
+    embeddings → batched upload to AI Search.
+  - Deterministic `chunk_id` + delete-by-file before upload = re-ingest never duplicates.
+  - Deletion handling: purges chunks + `ingestion_state` for `deleted` files.
+  - Retries with `retry_count`; `error`→`dead_letter` on exceeding `max_retries`; a poison file
+    never blocks the run. Writes `ingestion_state`, `ingestion_log`, `skipped_log`.
+  - Secrets (DI/AOAI/Search keys) sourced from Key Vault; endpoints/params from `config`.
 
 ### Sprint 3 — nb_02_create_search_index
 - Added `notebooks/nb_02_create_search_index.ipynb`: idempotent `create_or_update_index` with a
