@@ -1,0 +1,17 @@
+# Virtual env / bytecode
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Downloaded artifacts
+downloads/
+*.pdf
+
+# Credentials - never commit
+.env
+*.env
+**/config.json
+aws-credentials*
+*.pem
+*.key
