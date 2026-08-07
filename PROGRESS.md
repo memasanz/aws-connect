@@ -9,7 +9,7 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 | --- | --- | --- |
 | S0 | Repo & scaffolding + `PRODUCT_SPEC.md` | ✅ done |
 | S1 | Delta schemas + `config` + `acls.json` | ✅ done |
-| S2 | `nb_01_metadata_delta` (scan/change/delete) | ⬜ pending |
+| S2 | `nb_01_metadata_delta` (scan/change/delete) | ✅ done |
 | S3 | `nb_02_create_search_index` | ⬜ pending |
 | S4 | `nb_03_ingest_to_index` (core) | ⬜ pending |
 | S5 | ACL drift + delete purge + bounded parallelism | ⬜ pending |
@@ -25,6 +25,12 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
   - Note: bucket region is **us-east-2** (initial us-east-1 URL returned a 301).
 
 ## Changelog
+
+### Sprint 2 — nb_01_metadata_delta
+- Added `notebooks/nb_01_metadata_delta.ipynb`: recursive Spark-native listing of the S3 shortcut
+  (`binaryFile` + `recursiveFileLookup`, column-pruned so file bytes are never read), computes a
+  size+mtime `change_hash`, MERGEs into `file_metadata` driving `new`/`reingest`, refreshes
+  `last_seen_utc`, and flags `deleted` via a not-matched-by-source sweep.
 
 ### Sprint 1 — data model + config + ACLs
 - Added `notebooks/nb_00_bootstrap.ipynb`: idempotently creates `config`, `file_metadata`,
