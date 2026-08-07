@@ -7,7 +7,7 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 
 | Sprint | Scope | Status |
 | --- | --- | --- |
-| S0 | Repo & scaffolding + `PRODUCT_SPEC.md` | 🟡 in progress |
+| S0 | Repo & scaffolding + `PRODUCT_SPEC.md` | ✅ done |
 | S1 | Delta schemas + `config` + `acls.json` | ⬜ pending |
 | S2 | `nb_01_metadata_delta` (scan/change/delete) | ⬜ pending |
 | S3 | `nb_02_create_search_index` | ⬜ pending |
@@ -16,8 +16,13 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 | S6 | Pipelines + docs | ⬜ pending |
 
 ## Fabric connectivity test
-- ⏳ Attempting to create the S3 shortcut against `mmx-amazon-s3-bucket` in a Fabric lakehouse
-  (using the scoped IAM access key). Result will be recorded here.
+- ✅ **S3 shortcut created and verified end-to-end.**
+  - Workspace: `workspace_FABRIC` (`ef1eda73-0a00-4ad0-80b2-5eccf9a98a5f`)
+  - Lakehouse: `aws_connect_lh` (`35f024b6-9a0e-44b0-9c3b-3a43260c8f51`)
+  - Connection: `aws-connect-s3-mmx` (`20509714-7563-4017-bc21-7a3f541b1a1a`), Amazon S3 / Basic (access key)
+  - Shortcut: `Files/s3_mmx_bucket` → `https://mmx-amazon-s3-bucket.s3.us-east-2.amazonaws.com`
+  - Verified via OneLake listing: `Files/s3_mmx_bucket/Fabric Data Agent.pdf` (649,958 bytes) is visible.
+  - Note: bucket region is **us-east-2** (initial us-east-1 URL returned a 301).
 
 ## Changelog
 
