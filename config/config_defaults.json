@@ -1,0 +1,32 @@
+{
+  "description": "Default values for the OneLake `config` delta table. Loaded by nb_00_bootstrap. Secrets are NEVER stored here - only Key Vault references (kv_* keys). See PRODUCT_SPEC.md section 6.",
+  "config": {
+    "acl_bypass_enabled": "false",
+    "acls_file_path": "Files/acls/acls.json",
+    "shortcut_root": "Files/s3_mmx_bucket",
+
+    "doc_intelligence_endpoint": "https://<your-di>.cognitiveservices.azure.com/",
+    "doc_intelligence_model": "prebuilt-layout",
+
+    "aoai_endpoint": "https://<your-aoai>.openai.azure.com/",
+    "aoai_embedding_deployment": "text-embedding-3-large",
+    "embedding_dimensions": "3072",
+
+    "search_endpoint": "https://<your-search>.search.windows.net",
+    "search_index_name": "docs-rag",
+
+    "chunk_size": "1000",
+    "chunk_overlap": "150",
+    "chunk_strategy_version": "v1",
+
+    "max_concurrency": "8",
+    "max_retries": "3",
+    "supported_extensions": "pdf,docx,pptx,xlsx,html,htm,txt,md",
+    "backfill_mode": "false",
+
+    "kv_name": "<your-keyvault-name>",
+    "kv_di_key_secret": "doc-intelligence-key",
+    "kv_aoai_key_secret": "aoai-key",
+    "kv_search_admin_key_secret": "search-admin-key"
+  }
+}

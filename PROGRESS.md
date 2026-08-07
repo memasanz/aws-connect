@@ -8,7 +8,7 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 | Sprint | Scope | Status |
 | --- | --- | --- |
 | S0 | Repo & scaffolding + `PRODUCT_SPEC.md` | ✅ done |
-| S1 | Delta schemas + `config` + `acls.json` | ⬜ pending |
+| S1 | Delta schemas + `config` + `acls.json` | ✅ done |
 | S2 | `nb_01_metadata_delta` (scan/change/delete) | ⬜ pending |
 | S3 | `nb_02_create_search_index` | ⬜ pending |
 | S4 | `nb_03_ingest_to_index` (core) | ⬜ pending |
@@ -25,6 +25,12 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
   - Note: bucket region is **us-east-2** (initial us-east-1 URL returned a 301).
 
 ## Changelog
+
+### Sprint 1 — data model + config + ACLs
+- Added `notebooks/nb_00_bootstrap.ipynb`: idempotently creates `config`, `file_metadata`,
+  `ingestion_state`, `ingestion_log`, `skipped_log` delta tables and seeds config defaults
+  (MERGE preserves operator overrides). Includes `load_config()` helper + ACL file validation.
+- Added `config/config_defaults.json` and `config/acls.example.json`.
 
 ### Sprint 0 — repo & scaffolding
 - Initialized git repo, added remote `origin` → `github.com/memasanz/aws-connect`.
