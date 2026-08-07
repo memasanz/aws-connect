@@ -13,7 +13,9 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 | S3 | `nb_02_create_search_index` | ✅ done |
 | S4 | `nb_03_ingest_to_index` (core) | ✅ done |
 | S5 | ACL drift + delete purge + bounded parallelism | ✅ done |
-| S6 | Pipelines + docs | ⬜ pending |
+| S6 | Pipelines + docs | ✅ done |
+
+**Build complete** — all 7 sprints (S0–S6) delivered and pushed to `main`.
 
 ## Fabric connectivity test
 - ✅ **S3 shortcut created and verified end-to-end.**
@@ -25,6 +27,16 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
   - Note: bucket region is **us-east-2** (initial us-east-1 URL returned a 301).
 
 ## Changelog
+
+### Sprint 6 — pipelines + docs polish
+- Expanded `PRODUCT_SPEC.md` §7–8: documented `nb_00_bootstrap` (7.0) and `nb_04_acl_reconcile`
+  (7.4), corrected §7.3 to reflect deletion/backfill/two-phase parallelism as built (ACL drift moved
+  to nb_04), and rewrote §8 with concrete setup/pipeline/maintenance orchestration + scheduling
+  (recommended `pl_ingest` = nb_01 → nb_03 daily; nb_00/nb_02 at setup; nb_04 after ACL edits).
+- Rewrote `README.md`: full Fabric notebook role table + step-by-step "Deploying to Fabric" guide.
+- **Build complete** — the full notebook set + spec are in `main`. Notebooks are authored and
+  JSON-validated locally; they are designed for Fabric Spark and have **not** been executed against
+  live Fabric (only the S3 shortcut connectivity was verified end-to-end).
 
 ### Sprint 5 — ACL drift + bounded parallelism + backfill pacing
 - Reworked `nb_03` processing into two phases: network-heavy work (DI → embed → Search) runs in a

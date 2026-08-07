@@ -203,6 +203,11 @@ Secrets are **never** stored here — only Key Vault references.
 
 Kept minimal, low-abstraction, PySpark-parallel where it helps.
 
+### 7.0 `nb_00_bootstrap` (run once / on config change)
+**Purpose:** idempotently create the `config`, `file_metadata`, `ingestion_state`, `ingestion_log`,
+and `skipped_log` delta tables and seed `config` defaults (MERGE preserves operator overrides).
+Provides the `load_config(spark)` helper reused by the other notebooks and validates `acls.json`.
+
 ### 7.1 `nb_01_metadata_delta` (Pipeline 1)
 **Purpose:** scan the S3 shortcut, compute change-detection metadata, maintain `file_metadata`.
 - Create `config` + `file_metadata` if missing.
@@ -221,12 +226,14 @@ Kept minimal, low-abstraction, PySpark-parallel where it helps.
 Vector config: HNSW; optional semantic ranker.
 
 ### 7.3 `nb_03_ingest_to_index` (Pipeline 2)
-**Purpose:** ingest changed/new files + handle deletions + ACL drift.
-- Select rows `process_status IN ('new','changed','reingest','error','deleted')`.
+**Purpose:** ingest changed/new files + handle deletions.
+- Select rows `process_status IN ('new','changed','reingest','error')` under `max_retries`; process
+  `deleted` rows first (purge chunks + `ingestion_state`).
 - **Claim:** MERGE-guarded transition `→ pending → ingesting` (prevents double-processing).
+- **Batch/backfill pacing:** claim at most `batch_size` (or `backfill_batch_size` when
+  `backfill_mode=true`) files per run, ordered deterministically — status-driven so the corpus
+  ingests incrementally and resumably.
 - **Deletion:** for `deleted`, delete all chunks for `file_path` from Search + remove `ingestion_state`.
-- **ACL drift:** if only `acl_version` changed (same `change_hash`) → patch `allowed_groups` on
-  existing Search docs; **skip** DI/embeddings.
 - **Full ingest** (new/changed):
   1. Resolve folder → groups via `acls.json`; none & `acl_bypass_enabled=false` → `skipped(no_acl)`.
   2. Extension in `supported_extensions`? else → `skipped(doc_intel_unsupported)`.
@@ -237,18 +244,43 @@ Vector config: HNSW; optional semantic ranker.
   7. Push chunks (+ `allowed_groups`, `embedding_model`, `chunk_strategy_version`) to Search.
   8. Update `ingestion_state`, write `ingestion_log`, set `complete`.
 - **Errors:** increment `retry_count`; ≥ `max_retries` → `dead_letter` + `skipped_log`; else `error`.
-- **Parallelism:** fan out per-file with a bounded pool (`max_concurrency`); batch Search uploads.
+- **Parallelism:** two-phase — network-heavy work (DI/embed/Search) fans out in a bounded
+  `ThreadPoolExecutor(max_concurrency)`; Delta status/state/log writes are applied serially on the
+  driver to avoid optimistic-concurrency conflicts. Search uploads are batched.
+
+### 7.4 `nb_04_acl_reconcile` (run after editing `acls.json`)
+**Purpose:** keep security trimming in sync with ACL changes **without** re-running Doc Intelligence
+or embeddings. For each `complete` file whose freshly-resolved `acl_version` differs from the value
+in `ingestion_state`, merge-patch only the `allowed_groups` field on that file's existing Search
+chunks and update the stored `acl_version`.
 
 ---
 
 ## 8. Pipelines
 
+The solution runs as two scheduled Fabric Data Pipelines plus two on-demand setup/maintenance
+notebooks. Each pipeline step is a **Notebook activity** bound to the `aws_connect_lh` lakehouse.
+
+### Setup (run once, on-demand)
+1. `nb_00_bootstrap` — create tables + seed config.
+2. `nb_02_create_search_index` — create/upgrade the AI Search index. Re-run only on schema change.
+
 ### Pipeline 1 — Metadata Refresh
-Runs `nb_01_metadata_delta`. Schedule: hourly/daily + on-demand. Output: fresh `file_metadata` statuses.
+Runs `nb_01_metadata_delta`. **Schedule:** hourly or daily (via pipeline schedule trigger) + on-demand.
+Output: fresh `file_metadata` statuses (`new`/`reingest`/`deleted`). Cheap — safe to run frequently.
 
 ### Pipeline 2 — Index Ingestion
-Runs `nb_03_ingest_to_index` (index must exist via `nb_02`). Schedule: after Pipeline 1 or
-independently. Idempotent + resumable (status-driven).
+Runs `nb_03_ingest_to_index` (index must exist via `nb_02`). **Schedule:** chained after Pipeline 1
+(single pipeline with both activities in sequence) or on its own cadence. Idempotent + resumable
+(status-driven), so overlapping/failed runs are safe and pick up where they left off. For the
+initial load, set `backfill_mode=true` and let it run repeatedly until the queue drains.
+
+### Maintenance — ACL Reconcile (on-demand)
+Run `nb_04_acl_reconcile` after editing `acls.json` to re-stamp `allowed_groups` on already-indexed
+content without re-ingesting. Optionally add it as a scheduled step if ACLs change frequently.
+
+**Recommended orchestration:** one pipeline `pl_ingest` = [`nb_01_metadata_delta` → `nb_03_ingest_to_index`]
+on a daily schedule; `nb_00`/`nb_02` run manually at setup; `nb_04` run manually after ACL edits.
 
 ---
 
