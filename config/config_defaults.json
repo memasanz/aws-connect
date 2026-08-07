@@ -23,6 +23,8 @@
     "max_retries": "3",
     "supported_extensions": "pdf,docx,pptx,xlsx,html,htm,txt,md",
     "backfill_mode": "false",
+    "batch_size": "200",
+    "backfill_batch_size": "500",
 
     "kv_name": "<your-keyvault-name>",
     "kv_di_key_secret": "doc-intelligence-key",

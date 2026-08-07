@@ -12,7 +12,7 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 | S2 | `nb_01_metadata_delta` (scan/change/delete) | ✅ done |
 | S3 | `nb_02_create_search_index` | ✅ done |
 | S4 | `nb_03_ingest_to_index` (core) | ✅ done |
-| S5 | ACL drift + delete purge + bounded parallelism | ⬜ pending |
+| S5 | ACL drift + delete purge + bounded parallelism | ✅ done |
 | S6 | Pipelines + docs | ⬜ pending |
 
 ## Fabric connectivity test
@@ -25,6 +25,18 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
   - Note: bucket region is **us-east-2** (initial us-east-1 URL returned a 301).
 
 ## Changelog
+
+### Sprint 5 — ACL drift + bounded parallelism + backfill pacing
+- Reworked `nb_03` processing into two phases: network-heavy work (DI → embed → Search) runs in a
+  bounded `ThreadPoolExecutor(max_concurrency)`, while all Delta status/state/log writes are applied
+  serially on the driver to avoid optimistic-concurrency conflicts.
+- Added backfill pacing: runs claim at most `batch_size` (or `backfill_batch_size` when
+  `backfill_mode=true`) files per run, ordered deterministically — status-driven so a huge corpus
+  ingests incrementally and resumably.
+- Added `notebooks/nb_04_acl_reconcile.ipynb`: fast path that re-stamps `allowed_groups` on existing
+  Search chunks when `acls.json` changes — comparing the stored `acl_version` vs the freshly resolved
+  one and merge-patching only drifted files, with **no** Doc Intelligence / embedding re-runs.
+- Seeded `batch_size` / `backfill_batch_size` config defaults (bootstrap + `config_defaults.json`).
 
 ### Sprint 4 — nb_03_ingest_to_index (core ingestion)
 - Added `notebooks/nb_03_ingest_to_index.ipynb`: works the `file_metadata` status queue end-to-end.
