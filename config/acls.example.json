@@ -1,6 +1,6 @@
 {
-  "version": "2026-08-07",
-  "description": "Folder-path -> Entra group IDs. Paths are the src_key (object path relative to the S3 bucket root) and are mode-independent (same keys for source_mode=s3_shortcut or s3_direct). A file inherits the ACL of the nearest ancestor folder present here; a subfolder entry OVERRIDES its parent (e.g. hr/onboarding below adds a second group on top of hr). Groups are Entra group object IDs (GUIDs). See PRODUCT_SPEC.md section 10.",
+  "version": "2026-08-08",
+  "description": "Folder-path -> Entra group IDs (and optional direct per-user grants). Paths are the src_key (object path relative to the S3 bucket root) and are mode-independent (same keys for source_mode=s3_shortcut or s3_direct). A file inherits the ACL of the nearest ancestor folder present here; a subfolder entry OVERRIDES its parent (e.g. hr/onboarding below adds a second group on top of hr). Groups are Entra group object IDs (GUIDs); the optional 'users' array holds Entra user object IDs granted access directly. A chunk is visible when the caller matches an allowed_groups OR allowed_users entry. Prefer groups (no reindex when membership changes); use direct user grants only when a doc is shared with an individual not covered by a group. See PRODUCT_SPEC.md section 10.",
   "folders": [
     {
       "path": "finance/reports",
@@ -9,6 +9,11 @@
     {
       "path": "finance/policies",
       "groups": ["00000000-0000-0000-0000-000000000003"]
+    },
+    {
+      "path": "finance/private",
+      "groups": [],
+      "users": ["00000000-0000-0000-0000-0000000000a1"]
     },
     {
       "path": "hr",

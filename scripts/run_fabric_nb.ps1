@@ -72,8 +72,13 @@ $resp = Invoke-WebRequest -Method Post -Uri "https://api.fabric.microsoft.com/v1
 $loc = [string]$resp.Headers['Location']
 for ($i = 0; $i -lt 60; $i++) {
   Start-Sleep -Seconds 12
-  $tok = Fab-Token
-  $r = Invoke-RestMethod -Method Get -Uri $loc -Headers @{Authorization = "Bearer $tok"}
+  try {
+    $tok = Fab-Token
+    $r = Invoke-RestMethod -Method Get -Uri $loc -Headers @{Authorization = "Bearer $tok"}
+  } catch {
+    Write-Host ("[{0}] poll error (retrying): {1}" -f $i, $_.Exception.Message)
+    continue
+  }
   Write-Host ("[{0}] {1}" -f $i, $r.status)
   if ($r.status -in 'Completed','Failed','Cancelled') {
     if ($r.failureReason) { $r.failureReason | ConvertTo-Json -Depth 6 }

@@ -20,7 +20,8 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 | S10 | E2E incremental + AI Search quality test (+ config hygiene) | ✅ code done · E2E run deferred to S11 |
 | S11 | Dual source (S3 shortcut **or** direct S3) + index metadata fields | ✅ done · E2E green in `poc_ws_0808` |
 | S12 | Bug-fixes surfaced by the S11 clean-workspace E2E run | ✅ done |
-| S13 | Config single-sourcing + author extraction + all-filetype DI quality tests + slimmer index | 🏗️ code done · E2E pending in `poc_ws_0808c` |
+| S13 | Config single-sourcing + author extraction + all-filetype DI quality tests + slimmer index | ✅ done · E2E green in `poc_ws_0808c` (22/22) |
+| S14 | Per-user ACL grants (`allowed_users`) + `retrievable:false` on ACL fields | ✅ done · E2E green in `poc_ws_0808c` (26/26) |
 
 **Core build complete** (S0–S6). **Sprint 7** adds a live end-to-end test with real data + deployed
 Azure resources. **Sprint 8** hardens the pipeline for repeated stop/restart batch runs with strong
@@ -47,7 +48,24 @@ a clean workspace (`poc_ws_0808c`).
 | 13.5 | **All-filetype DI quality tests** — test-data generator + E2E corpus now exercise every supported type (pdf, docx, pptx, xlsx, html, htm, txt, md) with an embedded `CONTENTMARKER-<EXT>`; `nb_ops_03` group E asserts per-type marker extraction, contiguous chunk completeness (0..K-1 == `ingestion_state`), and Office author | ✅ done |
 | 13.6 | **Slimmer index** — removed `embedding_model` field from the Search index schema + doc payload (still generated + stored as `content_vector`; `embedding_model` kept in Delta `ingestion_state`/`ingestion_log` for re-embed detection). `nb_setup_03` now recreates the index if a schema change isn't updatable in place | ✅ done |
 | 13.7 | **Deployment docs** — surfaced `infra/deploy.ps1` (Option A automated deploy) in SETUP/README; corrected stale keyless-only infra prose to the actual hybrid model; added Key Vault Secrets User grant to README quick-start | ✅ done |
-| 13.8 | **E2E in clean workspace `poc_ws_0808c`** | 🏗️ pending |
+| 13.8 | **E2E in clean workspace `poc_ws_0808c`** | ✅ done — 22/22 checks green in `s3_direct` mode |
+
+### Sprint 14 plan — per-user ACL grants + hardened ACL fields
+Goal: extend folder-based security trimming to support **direct per-user grants** (Entra user object
+IDs) alongside groups, following the Azure AI Search group-identifier pattern, and hide the ACL
+fields from query responses. E2E in `poc_ws_0808c`.
+
+| # | Task | Status |
+| --- | --- | --- |
+| 14.1 | **`allowed_users` index field** — `Collection(Edm.String)`, `filterable`, `retrievable:false` (alongside `allowed_groups`, which is now also `retrievable:false` so ACL lists never appear in query responses — MS best practice) | ✅ done |
+| 14.2 | **ACL resolution + stamping** — `acls.json` folders gain an optional `users` array; `resolve_acl` returns `(groups, users, acl_version)`; ingest stamps both `allowed_groups` and `allowed_users`; the no-ACL skip gate triggers only when a file has neither groups nor users. `acl_version` stays groups-only for group-only folders (no spurious drift on upgrade), extends to include users when present | ✅ done |
+| 14.3 | **Reconcile both fields** — `nb_pipeline_03_acl_reconcile` re-stamps `allowed_groups` **and** `allowed_users` on ACL drift | ✅ done |
+| 14.4 | **Query filter (OR groups+users)** — `nb_ops_04` `trimming_filter(groups, users)` builds `(allowed_groups/any(...) or allowed_users/any(...))`, parenthesized so it composes with AND filters; added `USER_IDS` param + a direct-user example | ✅ done |
+| 14.5 | **E2E coverage** — harness adds a `finance/private` folder granted to a user only (no group); `nb_ops_03` group C2 asserts the user sees exactly its files, a non-grantee sees nothing, user-only files never leak into group queries, and the combined group-OR-user filter returns the union. Verify no longer selects the now-non-retrievable `allowed_groups` | ✅ done |
+| 14.6 | **Docs** — PRODUCT_SPEC §4.5 (acls.json `users`) + §10/10.1 (OR semantics, enforcement responsibilities), index field list | ✅ done |
+| 14.7 | **E2E in `poc_ws_0808c`** | ✅ done — **26/26** checks green in `s3_direct` mode: user-only grant (`aaaaaaaa`→3), combined groups+user grant (`bbbbbbbb`→12), non-grantee sees nothing, combined group-OR-user union (53), all group trims exact with 0 leaks |
+
+_Also fixed a latent bug in `nb_setup_03`: an in-place index schema update returns **HTTP 204** (No Content), but the success check only accepted `(200, 201)` and then called `resp.json()` on an empty body — so any schema update (vs. first-time create) raised and cancelled the Spark session. Now accepts `204` and prints the status without parsing an empty body._
 
 ### Sprint 11 plan — dual S3 source + index metadata fields
 Goal: read source files either via the existing **Fabric S3 shortcut** or **directly from S3**

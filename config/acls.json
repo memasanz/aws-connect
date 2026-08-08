@@ -1,6 +1,6 @@
 {
   "version": "2026-08-08",
-  "description": "Sprint 10/11 E2E test ACLs. Differentiated per-folder groups so security trimming returns different results per group. Paths are the src_key (object path relative to the S3 bucket root, e.g. 'testset/finance/reports') and are mode-independent: the same keys apply whether files are read via the OneLake shortcut (source_mode=s3_shortcut) or directly from S3 (source_mode=s3_direct). Resolution is nearest-ancestor: a subfolder entry overrides its parent. engineering/* is intentionally omitted to exercise the no_acl skip path. Group GUIDs are placeholders for Entra group object IDs the calling app injects per user. See PRODUCT_SPEC.md section 10 and the Sprint 10 E2E section.",
+  "description": "Sprint 10/11/14 E2E test ACLs. Differentiated per-folder groups so security trimming returns different results per group. Each folder may also grant direct per-user access via an optional 'users' array (Entra user object IDs) OR'd with 'groups' at query time. testset/finance/private is granted ONLY to a user (no group) to exercise the allowed_users path; testset/hr/onboarding grants BOTH groups AND a direct user (mirroring the SharePoint UserIds+GroupIds pattern) to exercise the combined case. Paths are the src_key (object path relative to the S3 bucket root, e.g. 'testset/finance/reports') and are mode-independent: the same keys apply whether files are read via the OneLake shortcut (source_mode=s3_shortcut) or directly from S3 (source_mode=s3_direct). Resolution is nearest-ancestor: a subfolder entry overrides its parent. engineering/* is intentionally omitted to exercise the no_acl skip path. Group/user GUIDs are placeholders for Entra object IDs the calling app injects per user. See PRODUCT_SPEC.md section 10 and the Sprint 10/14 E2E section.",
   "folders": [
     {
       "path": "testset/finance/reports",
@@ -15,6 +15,13 @@
       ]
     },
     {
+      "path": "testset/finance/private",
+      "groups": [],
+      "users": [
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+      ]
+    },
+    {
       "path": "testset/hr",
       "groups": [
         "33333333-3333-3333-3333-333333333333"
@@ -25,6 +32,9 @@
       "groups": [
         "33333333-3333-3333-3333-333333333333",
         "44444444-4444-4444-4444-444444444444"
+      ],
+      "users": [
+        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
       ]
     }
   ]

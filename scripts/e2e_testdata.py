@@ -53,24 +53,35 @@ G222 = ["22222222-2222-2222-2222-222222222222"]
 G333 = ["33333333-3333-3333-3333-333333333333"]
 G334 = ["33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444"]
 
+# Direct per-user grants (Entra object IDs). finance/private is granted ONLY to USER_A (no group),
+# exercising the allowed_users path: it must be invisible to every group query yet returned by a
+# user-scoped filter for USER_A. hr/onboarding grants BOTH its groups AND USER_B (the combined
+# SharePoint-style UserIds+GroupIds case): its files are visible to G333/G444 members AND to USER_B.
+# Mirror both in config/acls.json.
+USER_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+USER_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
 # Office formats carry an author in docProps/core.xml; the pipeline extracts it into the index.
 OFFICE_EXTS = {"docx", "pptx", "xlsx"}
 
-# Corpus layout: (folder_under_testset, groups, ingested?, {ext: count}).
+# Corpus layout: (folder_under_testset, groups, users, ingested?, {ext: count}).
 # finance/policies exercises EVERY Doc-Intelligence-supported type so the E2E verifies extraction
 # quality per file type (pdf, docx, pptx, xlsx, html, htm, md) under an ACL; finance/reports covers txt.
+# finance/private exercises the user-only (no group) ACL grant.
 LAYOUT = [
-    ("finance/reports",   G111, True,  {"pdf": 45, "txt": 5}),                                  # 50
-    ("finance/policies",  G222, True,  {"pdf": 6, "docx": 2, "pptx": 1, "xlsx": 1,              # 13
-                                        "html": 1, "htm": 1, "md": 1}),
-    ("hr",                G333, True,  {"pdf": 20}),                                            # 20
-    ("hr/onboarding",     G334, True,  {"pdf": 12}),                                            # 12
-    ("engineering",       [],   False, {"pdf": 8}),                                             # 8 no_acl skip
+    ("finance/reports",   G111, [],       True,  {"pdf": 45, "txt": 5}),                       # 50
+    ("finance/policies",  G222, [],       True,  {"pdf": 6, "docx": 2, "pptx": 1, "xlsx": 1,   # 13
+                                                  "html": 1, "htm": 1, "md": 1}),
+    ("finance/private",   [],   [USER_A], True,  {"pdf": 3}),                                   # 3 user-only ACL
+    ("hr",                G333, [],       True,  {"pdf": 20}),                                  # 20
+    ("hr/onboarding",     G334, [USER_B], True, {"pdf": 12}),                                  # 12 groups + user
+    ("engineering",       [],   [],       False, {"pdf": 8}),                                   # 8 no_acl skip
 ]
 
 TITLE = {
     "finance/reports": "Finance Report",
     "finance/policies": "Finance Policy",
+    "finance/private": "Confidential Memo",
     "hr": "HR Document",
     "hr/onboarding": "Onboarding Guide",
     "engineering": "Engineering Spec",
@@ -103,17 +114,17 @@ def _pages(ext, i):
 def canonical_manifest():
     """Deterministic description of every generated file (no I/O)."""
     items = []
-    for folder, groups, ingested, counts in LAYOUT:
+    for folder, groups, users, ingested, counts in LAYOUT:
         slug = _slug(folder)
         key_dir = f"{PREFIX}{folder}/{E2E}/"
         for ext, n in counts.items():
             for i in range(n):
                 name = _name(slug, ext, i)
-                items.append(_item(key_dir + name, folder, groups, ingested, ext, _pages(ext, i)))
+                items.append(_item(key_dir + name, folder, groups, users, ingested, ext, _pages(ext, i)))
     return items
 
 
-def _item(key, folder, groups, ingested, ext, pages):
+def _item(key, folder, groups, users, ingested, ext, pages):
     # rel_path is the src_key (object path relative to the bucket root) = the identity nb_pipeline_02 stamps
     # as file_path in both source modes. nb_ops_03 matches on it directly.
     # content_marker: the token embedded in the file body (see gen_testdocs.marker) so the verify
@@ -125,6 +136,7 @@ def _item(key, folder, groups, ingested, ext, pages):
         "ext": ext,
         "pages": pages,
         "groups": groups,
+        "users": users,
         "ingested": bool(ingested),
         "author": (AUTHOR if ext in OFFICE_EXTS else None),
         "content_marker": f"CONTENTMARKER-{ext.upper()}",

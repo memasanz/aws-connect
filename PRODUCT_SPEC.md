@@ -132,17 +132,22 @@ Append-only skip/failure log: `file_path, reason, detail, run_id, ts_utc`.
 `reason` ∈ {`doc_intel_unsupported`, `doc_intel_error`, `no_acl`, `empty_extract`, `source_missing`, `dead_letter`}.
 
 ### 4.5 `acls/acls.json` (OneLake Files)
-Folder-path → Entra group IDs. Pattern from `memasanz/cohesityACLsIntoFabric`.
+Folder-path → Entra group IDs, plus optional direct per-user grants. Pattern from `memasanz/cohesityACLsIntoFabric`.
 
 ```json
 {
-  "version": "2026-08-07",
+  "version": "2026-08-08",
   "folders": [
     { "path": "Files/shortcut/finance", "groups": ["<entra-group-guid-1>", "<entra-group-guid-2>"] },
-    { "path": "Files/shortcut/hr",      "groups": ["<entra-group-guid-3>"] }
+    { "path": "Files/shortcut/hr",      "groups": ["<entra-group-guid-3>"] },
+    { "path": "Files/shortcut/private", "groups": [], "users": ["<entra-user-oid-1>"] }
   ]
 }
 ```
+The `users` array is **optional** (defaults to empty) — a folder may grant access to Entra **groups**,
+individual **users** (by object ID), or both. A chunk is visible when the caller matches an
+`allowed_groups` **or** `allowed_users` entry. Prefer groups (no reindex when membership changes);
+use direct user grants only when a doc is shared with an individual not covered by a group.
 Resolution: a file inherits the ACL of the **nearest ancestor folder** present in `acls.json`.
 
 ---
@@ -237,7 +242,7 @@ change-detection metadata, maintain `file_metadata`.
 `chunk_id` (key), `file_path`, `file_name`, `file_extension`, `content` (searchable),
 `content_vector` (vector, `embedding_dimensions`), `page_number`, `chunk_index`,
 `folder_path` (filterable/facetable), `file_size` (Int64), `last_modified` (DateTimeOffset),
-`author` (from document properties), `last_modified_by` (reserved), `allowed_groups` (collection, filterable, **not retrievable**),
+`author` (from document properties), `last_modified_by` (reserved), `allowed_groups` (collection, filterable, **not retrievable**), `allowed_users` (collection, filterable, **not retrievable**),
 `chunk_strategy_version`, `indexed_utc`.
 Vector config: HNSW; optional semantic ranker.
 (`embedding_model` is tracked in the `ingestion_state`/`ingestion_log` Delta tables for re-embed
@@ -348,26 +353,30 @@ status queue. Deletion is detected via stale `last_seen_utc`.
 ## 10. ACL Governance & Security Trimming
 - **`acls.json`** maps folder path → Entra group GUIDs; a file inherits the nearest ancestor's ACL.
 - **Ingestion gate:** no ACL + `acl_bypass_enabled=false` → `skipped(no_acl)`; else ingest.
-- **Security trimming:** resolved group GUIDs written to each chunk's `allowed_groups`; query layer
-  filters on the caller's group membership.
-- **ACL drift:** `acl_version` tracked per file; ACL-only change → re-stamp `allowed_groups`
-  (no DI/embeddings).
+- **Security trimming:** resolved group GUIDs written to each chunk's `allowed_groups`, plus any
+  direct-user OIDs to `allowed_users`; the query layer filters on the caller's group membership
+  **or** their own user ID.
+- **ACL drift:** `acl_version` tracked per file; ACL-only change → re-stamp `allowed_groups`/`allowed_users`
+  (no DI/embeddings). The version hash is groups-only for group-only folders (so adding the
+  per-user feature doesn't flag existing files as drifted), and extends to include users when present.
 
 ### 10.1 Query-time enforcement responsibilities (for the retrieval app)
 This follows the Azure AI Search **group-identifier security-trimming** pattern: `allowed_groups`
-is a `filterable`, **non-`retrievable`** `Collection(Edm.String)` (retrievable:false keeps the ACL
-list out of query responses, per MS guidance), and every query applies
-`allowed_groups/any(g: search.in(g, '<caller-group-guids>'))` (see `nb_ops_04_search_examples`).
+and `allowed_users` are `filterable`, **non-`retrievable`** `Collection(Edm.String)` fields
+(retrievable:false keeps the ACL lists out of query responses, per MS guidance), and every query
+applies `(allowed_groups/any(g: search.in(g, '<caller-group-guids>')) or allowed_users/any(u: search.in(u, '<caller-user-oid>')))`
+(see `nb_ops_04_search_examples`). A chunk is visible on a group **or** user match.
 Azure AI Search has **no built-in per-document identity enforcement** — trimming is a query filter,
 so security holds only if the application that queries the index enforces the following. These are
 the responsibility of whoever builds the retrieval/agent app, not the ingestion pipeline:
-1. **Always inject the trimming filter.** A query sent without
-   `allowed_groups/any(g: search.in(g, ...))` returns **all** chunks. Never issue an untrimmed
-   query on behalf of a user (untrimmed queries are for admin/reporting only).
-2. **Keep the Search key server-side.** Resolve the caller's real Entra **group** GUIDs in a trusted
-   middle tier (e.g. Microsoft Graph / OBO flow) and build the filter there. Never hand an
-   admin/query key to the client or let the client supply its own group list — either lets a caller
-   omit the filter and bypass trimming.
+1. **Always inject the trimming filter.** A query sent without the `allowed_groups`/`allowed_users`
+   filter returns **all** chunks. Never issue an untrimmed query on behalf of a user (untrimmed
+   queries are for admin/reporting only). When AND-combining with other filters, keep the OR
+   trimming clause parenthesized (OData binds `and` tighter than `or`).
+2. **Keep the Search key server-side.** Resolve the caller's real Entra **group** GUIDs and their
+   **user** object ID in a trusted middle tier (e.g. Microsoft Graph / OBO flow) and build the
+   filter there. Never hand an admin/query key to the client or let the client supply its own group
+   or user list — either lets a caller omit the filter and bypass trimming.
 3. **Resolve group membership fresh per request** (or short-cached) so revoked access takes effect
    promptly; stale cached memberships extend access beyond revocation.
 
