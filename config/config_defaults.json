@@ -15,12 +15,12 @@
     "search_endpoint": "https://<your-search>.search.windows.net",
     "search_index_name": "docs-rag",
 
-    "chunk_size": "1000",
-    "chunk_overlap": "150",
-    "chunk_strategy_version": "v1",
+    "chunk_size": "8000",
+    "chunk_strategy_version": "page-v1",
 
     "max_concurrency": "8",
     "max_retries": "3",
+    "ingesting_lease_minutes": "120",
     "supported_extensions": "pdf,docx,pptx,xlsx,html,htm,txt,md",
     "backfill_mode": "false",
     "batch_size": "200",

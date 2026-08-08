@@ -186,13 +186,14 @@ Created-if-missing with defaults by `nb_00_bootstrap` (or nb_01).
 | `embedding_dimensions` | `3072` | vector length |
 | `search_endpoint` | `https://x.search.windows.net` | AI Search endpoint |
 | `search_index_name` | `docs-rag` | target index |
-| `chunk_size` | `1000` | chunk size (tokens/chars) |
-| `chunk_overlap` | `150` | chunk overlap |
-| `chunk_strategy_version` | `v1` | bump to force re-chunk |
+| `chunk_size` | `8000` | max chars per chunk (page-sized safety cap; pages under this = one chunk) |
+| `chunk_strategy_version` | `page-v1` | bump to force re-chunk |
 | `max_concurrency` | `8` | bounded parallelism vs throttling |
 | `max_retries` | `3` | before `dead_letter` |
+| `ingesting_lease_minutes` | `120` | reclaim `ingesting` rows stranded by a crashed run |
 | `supported_extensions` | `pdf,docx,pptx,xlsx,html,txt` | pre-filter before DI |
 | `backfill_mode` | `false` | larger batches / pacing for first load |
+| `batch_size` / `backfill_batch_size` | `200` / `500` | files claimed per run |
 | `kv_*` | secret names | Key Vault pointers (never secrets themselves) |
 
 Secrets are **never** stored here — only Key Vault references.
@@ -230,6 +231,8 @@ Vector config: HNSW; optional semantic ranker.
 - Select rows `process_status IN ('new','changed','reingest','error')` under `max_retries`; process
   `deleted` rows first (purge chunks + `ingestion_state`).
 - **Claim:** MERGE-guarded transition `→ pending → ingesting` (prevents double-processing).
+  Stale `ingesting` rows from a crashed/timed-out prior run (older than `ingesting_lease_minutes`)
+  are reclaimed at run start so no work is stranded.
 - **Batch/backfill pacing:** claim at most `batch_size` (or `backfill_batch_size` when
   `backfill_mode=true`) files per run, ordered deterministically — status-driven so the corpus
   ingests incrementally and resumably.
@@ -239,14 +242,18 @@ Vector config: HNSW; optional semantic ranker.
   2. Extension in `supported_extensions`? else → `skipped(doc_intel_unsupported)`.
   3. **Re-ingest cleanup:** delete existing chunks for `file_path` (deterministic `chunk_id`).
   4. Doc Intelligence → text + page numbers; empty → `skipped(empty_extract)`.
-  5. Chunk (size/overlap/strategy from config) with page numbers.
+  5. **Chunk by page** (one chunk per page, **no overlap** — mirrors AI Search's default page
+     chunking where `pageOverlapLength` is 0). A page longer than `chunk_size` chars is split into
+     multiple non-overlapping chunks that keep the same page number (safety cap for embedding limits).
   6. Embed via Azure OpenAI.
   7. Push chunks (+ `allowed_groups`, `embedding_model`, `chunk_strategy_version`) to Search.
   8. Update `ingestion_state`, write `ingestion_log`, set `complete`.
 - **Errors:** increment `retry_count`; ≥ `max_retries` → `dead_letter` + `skipped_log`; else `error`.
-- **Parallelism:** two-phase — network-heavy work (DI/embed/Search) fans out in a bounded
-  `ThreadPoolExecutor(max_concurrency)`; Delta status/state/log writes are applied serially on the
-  driver to avoid optimistic-concurrency conflicts. Search uploads are batched.
+- **Parallelism & durability:** two-phase — network-heavy work (DI/embed/Search) fans out in a
+  bounded `ThreadPoolExecutor(max_concurrency)`; Delta status/state/log writes are applied serially
+  on the driver to avoid optimistic-concurrency conflicts. **Status is committed per file as it
+  finishes** (incremental checkpointing — a crash never loses completed files), and Search uploads
+  are batched (500 docs/request).
 
 ### 7.4 `nb_04_acl_reconcile` (run after editing `acls.json`)
 **Purpose:** keep security trimming in sync with ACL changes **without** re-running Doc Intelligence

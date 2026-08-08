@@ -28,6 +28,16 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 
 ## Changelog
 
+### Post-build refinements — chunking + durability
+- **Chunk by page, no overlap** (per @memasanz): `nb_03` now emits one chunk per page (splitting only
+  pages that exceed `chunk_size`), matching Azure AI Search's default page chunking where
+  `pageOverlapLength`=0. Removed `chunk_overlap`; raised `chunk_size` default to `8000` (page cap);
+  `chunk_strategy_version`→`page-v1`. Verified with a local unit test.
+- **Crash durability:** added stale-lease recovery — `ingesting` rows left by a crashed/timed-out run
+  are reclaimed after `ingesting_lease_minutes` (default 120) so no file is stranded. Documented that
+  status is committed per-file (incremental checkpointing) and Search uploads are batched (500/req).
+- Updated `config_defaults.json`, `nb_00_bootstrap`, and `PRODUCT_SPEC.md` (§6, §7.3) accordingly.
+
 ### Sprint 6 — pipelines + docs polish
 - Expanded `PRODUCT_SPEC.md` §7–8: documented `nb_00_bootstrap` (7.0) and `nb_04_acl_reconcile`
   (7.4), corrected §7.3 to reflect deletion/backfill/two-phase parallelism as built (ACL drift moved
