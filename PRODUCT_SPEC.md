@@ -129,7 +129,7 @@ Append-only success log: `file_path, chunks, pages, duration_ms, embedding_model
 
 ### 4.4 `skipped_log`
 Append-only skip/failure log: `file_path, reason, detail, run_id, ts_utc`.
-`reason` ∈ {`doc_intel_unsupported`, `doc_intel_error`, `no_acl`, `empty_extract`, `dead_letter`}.
+`reason` ∈ {`doc_intel_unsupported`, `doc_intel_error`, `no_acl`, `empty_extract`, `source_missing`, `dead_letter`}.
 
 ### 4.5 `acls/acls.json` (OneLake Files)
 Folder-path → Entra group IDs. Pattern from `memasanz/cohesityACLsIntoFabric`.
@@ -254,7 +254,10 @@ Vector config: HNSW; optional semantic ranker.
   2. Extension in `supported_extensions`? else → `skipped(doc_intel_unsupported)`.
   3. **Re-ingest cleanup:** delete existing chunks for `file_path` (deterministic `chunk_id`).
   4. **Robust read:** S3-shortcut bytes are read with a retry on the local mount, falling back to the
-     Fabric fs API (copy-to-temp) since the mount does not always fault-in shortcut content.
+     Fabric fs API (copy-to-temp) since the mount does not always fault-in shortcut content. If every
+     method reports not-found — i.e. the file was **deleted from S3 after nb_01 listed it** — it is
+     marked **terminally** `skipped(source_missing)` (not a retryable `error`), so it never burns
+     retries or dead-letters; nb_01's deletion sweep formally tombstones it on its next run.
   5. Doc Intelligence → text + page numbers; empty → `skipped(empty_extract)`.
   6. **Chunk by page** (one chunk per page, **no overlap** — mirrors AI Search's default page
      chunking where `pageOverlapLength` is 0). A page longer than `chunk_size` chars is split into

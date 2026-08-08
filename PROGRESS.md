@@ -37,9 +37,17 @@ never get permanently stuck on a single document, and give **live visibility** i
 | 8.8 | **Live progress in Delta** — `run_progress` table (one row/run, throttled upsert, MVCC = no locks): phase, processed/total, throughput, ETA, last file | ✅ done |
 | 8.9 | **Job monitor** — `scripts/watch_job.ps1` reads real server-side Fabric job status on demand (a stopped poller ≠ a stopped job) | ✅ done |
 | 8.10 | **nb_05 live panel** — section 1b renders `run_progress` while a run is in flight | ✅ done |
-| 8.11 | **Clean-index E2E test** — empty index, reset queue, run drain loop, verify visibility + counts; then delete + update scenarios | 🏗️ in progress |
+| 8.11 | **Clean-index E2E test** — empty index, reset queue, run drain loop, verify visibility + counts | ✅ done |
+| 8.12 | **`source_missing` terminal skip** — a file deleted from S3 after nb_01 listed it now resolves to `skipped(source_missing)` instead of a retryable `error` (state reflects reality) | ✅ done |
 
 Config added: `batch_size=100`, `max_batches_per_run=0` (0=drain), `run_time_budget_min=0` (0=no cap).
+
+**E2E result (105-file corpus):** live `run_progress` showed `started → running → done` with
+processed/total, throughput (~4.6/min) and ETA updating in place; batched drain claimed 100 files in a
+single commit; final state **86 complete → 147 chunks in AI Search (exact match), 19 skipped
+(14 no_acl + 1 unsupported + 4 source_missing), 0 error, 0 stranded `ingesting`**. A follow-up run
+re-claimed **only** the 4 files still needing work — proving the status-driven work queue and
+stop/restart safety.
 
 ### Sprint 7 plan — end-to-end test
 Goal: prove the whole pipeline on real data and deployed services.
@@ -79,10 +87,21 @@ Goal: prove the whole pipeline on real data and deployed services.
   under cap → `reingest`, at/over cap → `dead_letter` (poison files can't loop forever).
 - **Robust S3-shortcut reads:** `read_file_bytes()` retries the local mount then falls back to the
   Fabric fs API (copy-to-temp) — fixes intermittent `FileNotFoundError` on shortcut content.
+- **`source_missing` terminal skip:** when a file was deleted from S3 after nb_01 listed it (every
+  read method reports not-found), it resolves to `skipped(source_missing)` instead of a retryable
+  `error`, so it never burns retries or dead-letters.
 - **Live progress in Delta:** new `run_progress` table (one row/run, throttled MVCC upsert = no file
   locks) with phase, processed/total, throughput, ETA, last file; surfaced in `nb_05` section 1b.
+  Fixed a latent bug where `None` fields (eta/last_file on the `started`/`done` rows) inferred
+  `NullType` and silently failed the MERGE — now written with an explicit typed schema.
+- **Faster claim:** the per-batch `ingesting` mark is now a **single** Delta update, not one update
+  per file (was ~100 commits / several minutes just to claim a batch).
 - **Job monitor:** `scripts/watch_job.ps1` reads the real server-side Fabric job status on demand
-  (a stopped client poller is not a stopped job).
+  (a stopped client poller is not a stopped job); `scripts/read_onelake_json.ps1` reads notebook diag
+  dumps back from OneLake.
+- **Verified end-to-end in Fabric** (105-file corpus): live visibility + 86 complete → 147 AI Search
+  chunks (exact match), 19 skipped, 0 error, 0 stranded ingesting; restart re-claimed only the 4 files
+  still needing work.
 - Config: `batch_size` 200→100, added `max_batches_per_run=0`, `run_time_budget_min=0`. Updated
   `nb_00_bootstrap`, `config_defaults.json`, `PRODUCT_SPEC.md` (§7.3, §11).
 
