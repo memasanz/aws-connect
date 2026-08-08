@@ -1,5 +1,5 @@
 {
-  "description": "Default values for the OneLake `config` delta table. Loaded by nb_00_bootstrap. Secrets are NEVER stored here - only Key Vault references (kv_* keys). See PRODUCT_SPEC.md section 6.",
+  "description": "Default values for the OneLake `config` delta table. Loaded by nb_00_bootstrap. Service auth is keyless (Entra ID) - no keys stored. See PRODUCT_SPEC.md sections 6 and 14.",
   "config": {
     "acl_bypass_enabled": "false",
     "acls_file_path": "Files/acls/acls.json",
@@ -26,9 +26,6 @@
     "batch_size": "200",
     "backfill_batch_size": "500",
 
-    "kv_name": "<your-keyvault-name>",
-    "kv_di_key_secret": "doc-intelligence-key",
-    "kv_aoai_key_secret": "aoai-key",
-    "kv_search_admin_key_secret": "search-admin-key"
+    "kv_name": "<your-keyvault-name>"
   }
 }

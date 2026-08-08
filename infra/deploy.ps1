@@ -5,12 +5,13 @@
 
 .DESCRIPTION
   Creates a resource group and deploys infra/main.bicep:
-    - Key Vault (stores DI / AOAI / Search keys as secrets)
+    - Key Vault (for any non-service secrets; no service keys under keyless auth)
     - Document Intelligence
     - Azure OpenAI (Foundry) + text-embedding-3-large deployment
-    - Azure AI Search
-  Grants the signed-in user secret get/list/set on the Key Vault so the Fabric notebooks
-  (run interactively as that user) can read the keys.
+    - Azure AI Search (AAD/RBAC data-plane enabled)
+  Auth is KEYLESS (Entra ID): the bicep grants the signed-in user the data-plane RBAC roles
+  (Cognitive Services User, Cognitive Services OpenAI User, Search Index Data Contributor) so the
+  Fabric notebooks (run interactively as that user) authenticate with DefaultAzureCredential.
 
 .EXAMPLE
   ./deploy.ps1 -ResourceGroup rg-aws-connect -Location eastus2
@@ -49,19 +50,17 @@ Write-Host ("  aoai_endpoint               = {0}" -f $out.aoaiEndpoint.value)
 Write-Host ("  aoai_embedding_deployment   = {0}" -f $out.embeddingDeployment.value)
 Write-Host ("  search_endpoint             = {0}" -f $out.searchEndpoint.value)
 Write-Host ""
-Write-Host "Key Vault secret names (already populated): doc-intelligence-key, aoai-key, search-admin-key"
+Write-Host "Auth is keyless (Entra ID): data-plane RBAC roles were granted to $oid by the deployment."
+Write-Host "  DI    -> Cognitive Services User"
+Write-Host "  AOAI  -> Cognitive Services OpenAI User"
+Write-Host "  Search-> Search Index Data Contributor"
 Write-Host "===================================================="
-
-# Emit a machine-readable file for downstream automation.
 $cfg = [ordered]@{
   kv_name                   = $out.kvName.value
   doc_intelligence_endpoint = $out.diEndpoint.value
   aoai_endpoint             = $out.aoaiEndpoint.value
   aoai_embedding_deployment = $out.embeddingDeployment.value
   search_endpoint           = $out.searchEndpoint.value
-  kv_di_key_secret          = 'doc-intelligence-key'
-  kv_aoai_key_secret        = 'aoai-key'
-  kv_search_admin_key_secret= 'search-admin-key'
 }
 $cfgPath = Join-Path $here 'deployment-outputs.json'
 $cfg | ConvertTo-Json | Set-Content -Path $cfgPath -Encoding utf8

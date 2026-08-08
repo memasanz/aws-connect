@@ -40,6 +40,35 @@ Tooling and a Microsoft Fabric solution for ingesting files from an Amazon S3 bu
 
 See `PRODUCT_SPEC.md` for the architecture, data model, ACL model, and scale/parallelism strategy.
 
+## Required permissions
+
+The notebooks use **keyless (Entra ID) authentication** — this subscription enforces
+`disableLocalAuth=true` on Cognitive Services, so account keys are unavailable. Grant the identity
+that **runs the Fabric notebooks** (the interactive user, or the workspace/pipeline identity used for
+scheduled runs) these data-plane roles:
+
+| Resource | Role | Needed by |
+| --- | --- | --- |
+| Document Intelligence | **Cognitive Services User** | `nb_03` (extract) |
+| Azure OpenAI | **Cognitive Services OpenAI User** | `nb_03` (embeddings) |
+| Azure AI Search | **Search Index Data Contributor** | `nb_02`, `nb_03`, `nb_04` (read/write index + docs) |
+
+Additional requirements:
+- **Azure AI Search must have RBAC enabled** (`authOptions` / role-based data-plane access).
+- The identity needs read access to the **OneLake lakehouse** (`aws_connect_lh`) and the attached S3
+  shortcut so files resolve at `/lakehouse/default/Files/...`.
+- The **AWS S3 access key** (scoped, non-root) is configured on the Fabric **S3 connection**, not in
+  the notebooks. Locally, the demo uses a named AWS CLI profile.
+
+Assign the Azure roles with, e.g.:
+
+```powershell
+$oid = az ad signed-in-user show --query id -o tsv
+az role assignment create --assignee $oid --role "Cognitive Services User" --scope <di-resource-id>
+az role assignment create --assignee $oid --role "Cognitive Services OpenAI User" --scope <aoai-resource-id>
+az role assignment create --assignee $oid --role "Search Index Data Contributor" --scope <search-resource-id>
+```
+
 ## Local S3 demo
 
 ```powershell
@@ -52,5 +81,8 @@ jupyter notebook s3_pdf_demo.ipynb
 
 ## Security
 
-- No credentials are stored in this repo. Secrets live in the AWS CLI profile / Azure Key Vault.
-- `.gitignore` excludes `.venv/`, `downloads/`, `.env`, and common credential files.
+- No credentials are stored in this repo. Service auth is keyless (Entra ID); the S3 key lives on the
+  Fabric connection / a local AWS CLI profile.
+- `.gitignore` excludes `.venv/`, `downloads/`, `.env`, `infra/deployment-outputs.json`, and common
+  credential files.
+

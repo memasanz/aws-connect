@@ -1,6 +1,7 @@
 // main.bicep — provisions the Azure resources for the aws-connect Fabric ingestion solution.
 // Resources: Key Vault, Document Intelligence, Azure OpenAI (Foundry) + embedding deployment,
-// Azure AI Search. Service keys are written into Key Vault as secrets.
+// Azure AI Search. Auth is KEYLESS (Entra ID): this subscription enforces disableLocalAuth=true on
+// Cognitive Services, so we grant data-plane RBAC roles to the running identity instead of using keys.
 //
 // Deploy with infra/deploy.ps1 (recommended) or:
 //   az deployment group create -g <rg> -f main.bicep -p baseName=<name> adminObjectId=<oid>
@@ -10,10 +11,13 @@
 @maxLength(11)
 param baseName string = 'awsconn'
 
-@description('Location for all resources.')
+@description('Location for Cognitive Services + Key Vault.')
 param location string = resourceGroup().location
 
-@description('Object ID (GUID) of the user/service principal that needs to read Key Vault secrets (e.g. the identity running the Fabric notebooks). Get via: az ad signed-in-user show --query id -o tsv')
+@description('Location for Azure AI Search (kept separate because some regions lack Search capacity).')
+param searchLocation string = 'westus3'
+
+@description('Object ID (GUID) of the user/service principal that RUNS the Fabric notebooks. It receives the data-plane roles and Key Vault access. Get via: az ad signed-in-user show --query id -o tsv')
 param adminObjectId string
 
 @description('Embedding model + deployment name.')
@@ -32,6 +36,11 @@ var kvName = toLower('kv-${baseName}-${substring(suffix, 0, 6)}')
 var diName = toLower('di-${baseName}-${substring(suffix, 0, 6)}')
 var aoaiName = toLower('aoai-${baseName}-${substring(suffix, 0, 6)}')
 var searchName = toLower('srch-${baseName}-${substring(suffix, 0, 6)}')
+
+// Built-in role definition IDs (data-plane).
+var roleCognitiveServicesUser = 'a97b65f3-24c7-4388-baec-2e87618e0e56'
+var roleOpenAiUser = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
+var roleSearchIndexDataContributor = '8ebe5a00-799e-43f5-93ac-243d3dce84a7'
 
 // --- Document Intelligence (Cognitive Services, kind FormRecognizer) ---
 resource di 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
@@ -73,20 +82,25 @@ resource embedding 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01'
   }
 }
 
-// --- Azure AI Search ---
+// --- Azure AI Search (AAD/RBAC data-plane enabled) ---
 resource search 'Microsoft.Search/searchServices@2024-06-01-preview' = {
   name: searchName
-  location: location
+  location: searchLocation
   sku: { name: searchSku }
   properties: {
     replicaCount: 1
     partitionCount: 1
     hostingMode: 'default'
     semanticSearch: 'free'
+    authOptions: {
+      aadOrApiKey: {
+        aadAuthFailureMode: 'http403'
+      }
+    }
   }
 }
 
-// --- Key Vault (access-policy model; grants the admin identity secret get/list) ---
+// --- Key Vault (retained for any non-service secrets; no service keys under keyless auth) ---
 resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: kvName
   location: location
@@ -107,27 +121,31 @@ resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-resource secretDi 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: kv
-  name: 'doc-intelligence-key'
+// --- Data-plane role assignments for the notebook-running identity (keyless auth) ---
+resource diRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(di.id, adminObjectId, roleCognitiveServicesUser)
+  scope: di
   properties: {
-    value: di.listKeys().key1
+    principalId: adminObjectId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleCognitiveServicesUser)
   }
 }
 
-resource secretAoai 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: kv
-  name: 'aoai-key'
+resource aoaiRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(aoai.id, adminObjectId, roleOpenAiUser)
+  scope: aoai
   properties: {
-    value: aoai.listKeys().key1
+    principalId: adminObjectId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleOpenAiUser)
   }
 }
 
-resource secretSearch 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: kv
-  name: 'search-admin-key'
+resource searchRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(search.id, adminObjectId, roleSearchIndexDataContributor)
+  scope: search
   properties: {
-    value: search.listAdminKeys().primaryKey
+    principalId: adminObjectId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleSearchIndexDataContributor)
   }
 }
 
