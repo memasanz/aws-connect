@@ -19,11 +19,16 @@ Tooling and a Microsoft Fabric solution for ingesting files from an Amazon S3 bu
 
 | Notebook | Role | When it runs |
 | --- | --- | --- |
-| `nb_00_bootstrap` | Create delta tables (`config`, `file_metadata`, `ingestion_state`, `ingestion_log`, `skipped_log`) + seed config | Once, at setup / config change |
+| `nb_00_bootstrap` | Create delta tables (`config`, `file_metadata`, `ingestion_state`, `ingestion_log`, `skipped_log`, `run_progress`, `throttle_log`) + seed config | Once, at setup / config change |
+| `nb_00b_set_config` | **Template** to point config at your endpoints (placeholders only — copy to a gitignored `_local_` notebook and fill real values) | Once, after `nb_00` |
 | `nb_01_metadata_delta` | Recursive S3-shortcut scan → change detection → `file_metadata` (new/reingest/deleted) | **Pipeline 1**, scheduled |
 | `nb_02_create_search_index` | Create/upgrade the Azure AI Search index (HNSW vector + `allowed_groups`) | Once / on schema change |
-| `nb_03_ingest_to_index` | Status-queue ingestion: ACL gate → Doc Intelligence → chunk → embed → Search; deletions, retries | **Pipeline 2**, scheduled |
+| `nb_03_ingest_to_index` | Status-queue ingestion: ACL gate → Doc Intelligence → chunk → embed → Search; deletions, retries; **endpoint pools + batched writes + throttle log** | **Pipeline 2**, scheduled |
 | `nb_04_acl_reconcile` | Re-stamp `allowed_groups` on ACL drift without re-ingesting | On-demand, after editing `acls.json` |
+| `nb_05_status` | Read-only status dashboard (queue, errors, throughput, throttling, live Search count) | On-demand |
+| `nb_06_reset_clean` | **Destructive** — wipe all pipeline Delta tables + empty the Search index (E2E clean slate) | E2E test only |
+| `nb_07_e2e_verify` | PASS/FAIL E2E assertions: index↔Delta reconciliation, page coverage, security trimming, incremental correctness | E2E test only |
+| `nb_08_search_examples` | How to query the index: keyword / filtered / **security-trimmed** / vector / hybrid / semantic | Reference |
 
 ## Deploying to Fabric
 
@@ -33,12 +38,46 @@ Tooling and a Microsoft Fabric solution for ingesting files from an Amazon S3 bu
 3. Store DI / Azure OpenAI / AI Search keys in Key Vault and set the `kv_*`, endpoint, and
    deployment values in the `config` table (`nb_00_bootstrap` seeds defaults from
    `config/config_defaults.json`).
-4. Upload your `acls.json` to `Files/acls/acls.json` (see `config/acls.example.json`).
-5. Run `nb_00_bootstrap`, then `nb_02_create_search_index`.
-6. Build pipeline `pl_ingest` = [`nb_01_metadata_delta` → `nb_03_ingest_to_index`] and schedule it.
+4. **Set endpoints without committing them:** in Fabric, copy `nb_00b_set_config` to a
+   `_local_set_config` notebook (the `notebooks/_local_*.ipynb` name is gitignored), fill in your real
+   endpoints, and Run All. The committed `nb_00b` is a **placeholders-only template** — real endpoints
+   live only in the `config` Delta table, never in git. See *Config hygiene* below.
+5. Upload your `acls.json` to `Files/acls/acls.json` (see `config/acls.example.json`).
+6. Run `nb_00_bootstrap`, then `nb_02_create_search_index`.
+7. Build pipeline `pl_ingest` = [`nb_01_metadata_delta` → `nb_03_ingest_to_index`] and schedule it.
    For the first load set `backfill_mode=true` in `config`.
 
 See `PRODUCT_SPEC.md` for the architecture, data model, ACL model, and scale/parallelism strategy.
+
+## Config hygiene (endpoints are not committed)
+
+Service **endpoints and resource names are not stored in this repo** — only `<your-…>` placeholders.
+Real values live solely in the Fabric `config` Delta table:
+
+- `nb_00b_set_config.ipynb` is a **template**. Copy it to `notebooks/_local_set_config.ipynb`
+  (gitignored via `notebooks/_local_*.ipynb`), fill real endpoints, and run once. The `config` table
+  MERGE preserves operator overrides across `nb_00` re-runs, so you only set them once.
+- `config/*.local.json` is gitignored for an optional local values file.
+- Because Fabric headless jobs can't reliably read arbitrary OS environment variables, the config
+  table (plus Key Vault for secrets) is the intended config mechanism — not `.env`/env vars.
+
+## End-to-end test
+
+`scripts/run_e2e_test.ps1` runs a repeatable, self-asserting end-to-end test:
+
+1. Uploads `config/acls.json` to OneLake and seeds ~100 generated docs (mix of 1/2/3-page PDFs, a few
+   txt/docx) under `testset/**/e2e/` in S3 — **additive**; pre-existing `testset/` objects are never
+   touched.
+2. `nb_06_reset_clean` wipes Delta tables + the Search index.
+3. `nb_01 → nb_03` ingest (baseline), then `nb_07_e2e_verify PHASE=baseline`.
+4. Mutates the corpus (modify 2, add 1, delete 1), `nb_01 → nb_03` again, then
+   `nb_07_e2e_verify PHASE=incremental`.
+
+`nb_07` asserts (PASS/FAIL): index↔`ingestion_state` reconciliation, **full page coverage** (every
+source page represented, with the `[pN` marker on page *N*), **security trimming** per Entra group,
+and **only-changes-reprocessed** on the incremental pass. Results are written to
+`Files/_diag/e2e_result.json`. The seed reconciles the corpus to a canonical state each run, so it is
+fully repeatable. Manage the corpus directly with `scripts/e2e_testdata.py {seed|mutate|cleanup}`.
 
 ## Required permissions
 

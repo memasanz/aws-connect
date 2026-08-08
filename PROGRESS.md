@@ -14,12 +14,81 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 | S4 | `nb_03_ingest_to_index` (core) | ✅ done |
 | S5 | ACL drift + delete purge + bounded parallelism | ✅ done |
 | S6 | Pipelines + docs | ✅ done |
-| S7 | End-to-end test: fake docs → S3 → deploy Azure → run in Fabric | 🏗️ in progress |
-| S8 | Batch durability hardening: stuck-file reclaim-as-retry, stop/restart, visibility | 🏗️ in progress |
+| S7 | End-to-end test: fake docs → S3 → deploy Azure → run in Fabric | ✅ done |
+| S8 | Batch durability hardening: stuck-file reclaim-as-retry, stop/restart, visibility | ✅ done |
+| S9 | Scale hardening: endpoint pools, batched status writes, throttle visibility | ✅ done |
+| S10 | E2E incremental + AI Search quality test (+ config hygiene) | ✅ code done · E2E run deferred to S11 |
+| S11 | Dual source (S3 shortcut **or** direct S3) + index metadata fields | 🏗️ in progress |
 
 **Core build complete** (S0–S6). **Sprint 7** adds a live end-to-end test with real data + deployed
 Azure resources. **Sprint 8** hardens the pipeline for repeated stop/restart batch runs with strong
-visibility and self-healing of stuck documents.
+visibility and self-healing of stuck documents. **Sprint 9** hardens *throughput* so the same
+pipeline scales toward 100k+ files without super-linear slowdown or invisible rate-limiting.
+**Sprint 10** adds a repeatable, self-asserting end-to-end test (differentiated ACLs, incremental
+change detection, index↔Delta reconciliation, full page coverage, security trimming) and removes
+service endpoints from the git repo (config hygiene). **Sprint 11** lets the pipeline read from an
+S3-compatible endpoint **directly** (REST + SigV4, no boto3) as an alternative to the OneLake S3
+shortcut, and enriches the Search index with folder-path + document metadata fields. The next
+end-to-end validation run targets a **clean Fabric workspace** (`poc_ws_0808`).
+
+### Sprint 11 plan — dual S3 source + index metadata fields
+Goal: read source files either via the existing **Fabric S3 shortcut** or **directly from S3**
+(config switch), without adding package dependencies; and add a **folder-path** field (plus other
+useful metadata) to the Search index. Then run the E2E in a clean workspace.
+
+| # | Task | Status |
+| --- | --- | --- |
+| 11.1 | **Dual source abstraction** — `source_mode = s3_shortcut \| s3_direct`; a small source interface (`list_files()` / `read_bytes()`) with two implementations selected by config | ⏳ todo |
+| 11.2 | **Direct S3 via REST + SigV4** — sign requests with stdlib `hashlib`/`hmac` (no `boto3`, no `%pip`); path-style addressing; `s3_endpoint_url`, `s3_bucket`, `s3_prefix`, `s3_region`, `s3_verify_tls`; keys from Key Vault secret names | ⏳ todo |
+| 11.3 | **Stable path identity** — normalized relative key (relative to prefix) as `file_path` identity so change-detection + `chunk_id` + ACL folder resolution behave the same in both modes (a mode switch that changes the scheme forces a re-index — documented) | ⏳ todo |
+| 11.4 | **Index metadata fields** — add `folder_path` (filterable/facetable) + `file_size`, `last_modified` from source listing; `author`/`last_modified_by` from S3 object metadata when present (else blank). Update `nb_02` schema, `nb_03` doc build, `nb_08` examples | ⏳ todo |
+| 11.5 | **E2E in clean workspace `poc_ws_0808`** — parameterize workspace/lakehouse ids; bootstrap → seed → 01 → 03 → 06/07; capture PASS/FAIL | ⏳ todo |
+
+### Sprint 10 plan — E2E incremental + quality test (+ config hygiene)
+Goal: a **repeatable** end-to-end test that proves the whole pipeline — incremental change detection,
+that index chunks reconcile with the Delta tables, that **every source page** is represented, and that
+**security trimming** returns the right documents per Entra group — plus get real endpoints out of git.
+
+| # | Task | Status |
+| --- | --- | --- |
+| 10.1 | **Config hygiene** — scrub `nb_00b_set_config` to `<your-…>` placeholders (template); gitignore `notebooks/_local_*.ipynb` + `config/*.local.json`; real endpoints live only in the Fabric `config` table (set once via a gitignored local copy). No endpoints in the repo | ✅ done |
+| 10.2 | **Differentiated ACLs** — `config/acls.json` gives distinct groups per folder (finance/reports=111, finance/policies=222, hr=333, hr/onboarding=333+444, engineering=none) so trimming returns different results per group; `acls.example.json` mirrors the model | ✅ done |
+| 10.3 | **`scripts/e2e_testdata.py`** — seed ~100 deterministic docs (mix of 1/2/3-page PDFs + a few txt/docx) under `testset/**/e2e/` in S3 (additive; pre-existing objects untouched) + a manifest; `seed` reconciles to a canonical state each run (repeatable); `mutate` = modify 2/add 1/delete 1; `cleanup` | ✅ done |
+| 10.4 | **`nb_06_reset_clean`** — destructive clean slate: empty all pipeline Delta tables + delete every Search doc (schema kept); `CONFIRM` guard | ✅ done |
+| 10.5 | **`nb_07_e2e_verify`** — PASS/FAIL assertions: index↔`ingestion_state` reconciliation, full page coverage (`[pN` marker on page N, count == `ingestion_log.pages`), security trimming per group, incremental correctness (only changes reprocessed; deleted purged; modified PDF grew) | ✅ done |
+| 10.6 | **`nb_08_search_examples`** — how to query the index: keyword, filtered, **security-trimmed**, vector, hybrid, semantic | ✅ done |
+| 10.7 | **`scripts/run_e2e_test.ps1`** — orchestrator: upload ACLs+manifest to OneLake → reset → seed → 01 → 03 → verify(baseline) → mutate → 01 → 03 → verify(incremental) → report. `run_fabric_nb.ps1` gains typed job parameters | ✅ done |
+| 10.8 | **E2E run in Fabric** — orchestrator wired + validated up to `nb_06_reset_clean` (Completed). Surfaced + fixed a real blocker: the Key Vault had **public network access disabled**, so the Search-key `getSecret` (used by nb_03/05/06) 403'd — re-enabled public access on that one vault. Full baseline+incremental run **deferred to the S11 clean-workspace run** | 🏗️ deferred to S11 |
+
+
+### Sprint 9 plan — scale hardening (throughput + quota visibility)
+Goal: keep every Sprint 8 guarantee (correctness, restart-safety, honest state) but remove the
+throughput ceilings that appear at scale — the per-file Delta rewrite (O(N²)), a single Doc
+Intelligence / Azure OpenAI endpoint (429 ceiling), and invisible throttling.
+
+| # | Task | Status |
+| --- | --- | --- |
+| 9.1 | **Round-robin endpoint pools** — `doc_intelligence_endpoints` / `aoai_endpoints` (comma-separated) are load-balanced per request via a thread-safe round-robin; each falls back to the singular `*_endpoint` so 1..N works unchanged. Lifts DI pages/min + AOAI embeddings TPM ~N× | ✅ done |
+| 9.2 | **Batched status writes (O(N²)→O(N))** — replace per-file `.update()` with one `apply_batch` per batch: a single MERGE into `file_metadata` (status/reason/retry_count), one MERGE into `ingestion_state`, one append each to `ingestion_log`/`skipped_log`. Removes the whole-table rewrite that dominated cost | ✅ done |
+| 9.3 | **Throttle/retry visibility** — `http()` records every 429/5xx/network retry + attempt-exhaustion (which endpoint host, Retry-After wait) into a thread-safe buffer, flushed once per batch to a `throttle_log` Delta table. Rate-limiting is now a queryable signal, not just reduced throughput | ✅ done |
+| 9.4 | **nb_05 throttle panel** — section 5b summarizes `throttle_log` by kind + endpoint host (429 counts, total backoff) so throttling is visible on the dashboard | ✅ done |
+| 9.5 | **Keyless multi-endpoint auth** — one `cognitiveservices.azure.com` Entra token spans every DI + AOAI endpoint in the pools (running identity needs the Cognitive Services role on each) — no per-endpoint keys | ✅ done |
+| 9.6 | **Pools wired, single endpoint each (scale-ready)** — kept 1 DI + 1 AOAI for now (pay-per-use, no standing cost); `config` carries `doc_intelligence_endpoints`/`aoai_endpoints` (empty → fall back to the singular endpoint). Scaling out is a **config-only** change: no code/redeploy | ✅ done |
+| 9.7 | **E2E validation in Fabric** — code-complete; end-to-end validation folded into the Sprint 11 clean-workspace E2E run (will confirm batched status leaves 0 stranded `ingesting`, `throttle_log` behaves, `run_progress` stays live, Search count matches Σ chunks) | 🏗️ pending (S11 run) |
+
+Config added: `doc_intelligence_endpoints`, `aoai_endpoints` (both comma-separated; empty = fall back
+to the singular endpoint). New table: `throttle_log`.
+
+**Scaling the pool later (no code change):** provision more DI/AOAI resources, grant the running
+identity the Cognitive Services role on each, then set the pooled config value to the comma-separated
+endpoint list, e.g.
+`UPDATE config SET value='https://di-1...azure.com/,https://di-2...azure.com/' WHERE key='doc_intelligence_endpoints'`
+(or edit it in nb_00's `DEFAULT_CONFIG`). nb_03 round-robins across all of them on its next run;
+`throttle_log` (nb_05 §5b) tells you when a given endpoint is hitting 429s and needs company.
+
+Design note — **why not batch the AOAI calls?** Spreading embeddings across N AOAI endpoints lifts the
+TPM ceiling ~N× while keeping one call per chunk-list (simpler, order-preserving, no giant-payload
+risk), so pooling was chosen over request batching.
 
 ### Sprint 8 plan — batch durability & visibility
 Goal: the pipeline must handle documents in **batches**, be safe to **stop and restart** at any time,

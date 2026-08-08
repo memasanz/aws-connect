@@ -1,21 +1,29 @@
 {
   "version": "2026-08-07",
-  "description": "Folder-path -> Entra group IDs. A file inherits the ACL of the nearest ancestor folder present here. Groups are Entra group object IDs (GUIDs). See PRODUCT_SPEC.md section 10.",
+  "description": "Folder-path -> Entra group IDs. A file inherits the ACL of the nearest ancestor folder present here; a subfolder entry OVERRIDES its parent (e.g. hr/onboarding below adds a second group on top of hr). Groups are Entra group object IDs (GUIDs). See PRODUCT_SPEC.md section 10.",
   "folders": [
     {
       "path": "Files/s3_mmx_bucket",
       "groups": ["00000000-0000-0000-0000-000000000001"]
     },
     {
-      "path": "Files/s3_mmx_bucket/finance",
-      "groups": [
-        "00000000-0000-0000-0000-000000000002",
-        "00000000-0000-0000-0000-000000000003"
-      ]
+      "path": "Files/s3_mmx_bucket/finance/reports",
+      "groups": ["00000000-0000-0000-0000-000000000002"]
+    },
+    {
+      "path": "Files/s3_mmx_bucket/finance/policies",
+      "groups": ["00000000-0000-0000-0000-000000000003"]
     },
     {
       "path": "Files/s3_mmx_bucket/hr",
       "groups": ["00000000-0000-0000-0000-000000000004"]
+    },
+    {
+      "path": "Files/s3_mmx_bucket/hr/onboarding",
+      "groups": [
+        "00000000-0000-0000-0000-000000000004",
+        "00000000-0000-0000-0000-000000000005"
+      ]
     }
   ]
 }

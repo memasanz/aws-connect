@@ -21,3 +21,10 @@ infra/deployment-outputs.json
 
 # Local diagnostic/scratch notebooks (not part of the pipeline)
 notebooks/_diag_*.ipynb
+
+# Local operator config copies with REAL endpoints (never commit)
+notebooks/_local_*.ipynb
+config/*.local.json
+
+# E2E test local artifacts (manifests + staging)
+.e2e/
