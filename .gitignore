@@ -15,3 +15,6 @@ downloads/
 aws-credentials*
 *.pem
 *.key
+
+# Deployment outputs (may contain endpoints/resource names)
+infra/deployment-outputs.json

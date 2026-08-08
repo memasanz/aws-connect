@@ -14,8 +14,24 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 | S4 | `nb_03_ingest_to_index` (core) | ✅ done |
 | S5 | ACL drift + delete purge + bounded parallelism | ✅ done |
 | S6 | Pipelines + docs | ✅ done |
+| S7 | End-to-end test: fake docs → S3 → deploy Azure → run in Fabric | 🏗️ in progress |
 
-**Build complete** — all 7 sprints (S0–S6) delivered and pushed to `main`.
+**Core build complete** (S0–S6). **Sprint 7** adds a live end-to-end test with real data + deployed
+Azure resources.
+
+### Sprint 7 plan — end-to-end test
+Goal: prove the whole pipeline on real data and deployed services.
+1. **Generate fake documents** in a deeply-nested folder hierarchy (multi-page PDFs, docx, txt, plus
+   one intentionally-unsupported file to exercise the skip path).
+2. **Upload to S3** under a test prefix, preserving the folder hierarchy.
+3. **Author deployment scripts** (Bicep + `deploy.ps1`) for: Resource Group, **Key Vault**,
+   **Document Intelligence**, **Azure OpenAI (Foundry)** with a `text-embedding-3-large` deployment,
+   and **Azure AI Search**. Service keys are written into Key Vault.
+4. **Deploy** the resources and capture endpoints + KV secret names.
+5. **Configure**: import notebooks into Fabric, attach `aws_connect_lh`, upload `acls.json` to
+   OneLake, set the `config` table values.
+6. **Run in Fabric**: `nb_00` → `nb_02` → `nb_01` → `nb_03`, end-to-end.
+7. **Report** results + evidence in this file.
 
 ## Fabric connectivity test
 - ✅ **S3 shortcut created and verified end-to-end.**
