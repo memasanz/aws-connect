@@ -3,7 +3,16 @@
   "config": {
     "acl_bypass_enabled": "false",
     "acls_file_path": "Files/acls/acls.json",
+    "source_mode": "s3_shortcut",
     "shortcut_root": "Files/s3_mmx_bucket",
+    "s3_endpoint_url": "https://s3.<your-region>.amazonaws.com",
+    "s3_bucket": "<your-bucket>",
+    "s3_prefix": "",
+    "s3_region": "us-east-1",
+    "s3_addressing": "path",
+    "s3_verify_tls": "true",
+    "s3_access_key_secret": "s3-access-key",
+    "s3_secret_key_secret": "s3-secret-key",
 
     "doc_intelligence_endpoint": "https://<your-di>.cognitiveservices.azure.com/",
     "doc_intelligence_model": "prebuilt-layout",

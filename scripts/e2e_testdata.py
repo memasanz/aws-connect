@@ -14,8 +14,9 @@ Commands:
   cleanup  Delete only the generated (e2e/) keys. Leaves pre-existing testset/ objects intact.
 
 A manifest (manifest.json) is written to --out describing every generated file: key, rel_path (the
-Files/... suffix used by the pipeline), folder, ext, pages, ACL groups, and whether it should be
-ingested (engineering/* is no_acl -> skipped). nb_07_e2e_verify uses it as ground truth.
+src_key = object path relative to the bucket root, which nb_03 stamps as file_path in both source
+modes), folder, ext, pages, ACL groups, and whether it should be ingested (engineering/* is no_acl ->
+skipped). nb_07_e2e_verify uses it as ground truth.
 
 Usage:
   python scripts/e2e_testdata.py seed   [--dry-run] [--out .e2e]
@@ -94,10 +95,11 @@ def canonical_manifest():
 
 
 def _item(key, folder, groups, ingested, ext, pages):
-    rel = SHORTCUT_ROOT + key  # Files/s3_mmx_bucket/testset/<folder>/e2e/<name>
+    # rel_path is the src_key (object path relative to the bucket root) = the identity nb_03 stamps
+    # as file_path in both source modes. nb_07 matches on it directly.
     return {
         "key": key,
-        "rel_path": rel,
+        "rel_path": key,
         "folder": folder,
         "ext": ext,
         "pages": pages,
@@ -215,17 +217,17 @@ DEL_PDF = f"{PREFIX}finance/reports/{E2E}/finance-reports-001.pdf"    # existed 
 def mutate(args):
     changes = {
         "modified": [
-            {"key": MOD_PDF, "rel_path": SHORTCUT_ROOT + MOD_PDF, "ext": "pdf",
+            {"key": MOD_PDF, "rel_path": MOD_PDF, "ext": "pdf",
              "pages_before": 1, "pages_after": 2, "expected_status": "reingest", "groups": G111},
-            {"key": MOD_TXT, "rel_path": SHORTCUT_ROOT + MOD_TXT, "ext": "txt",
+            {"key": MOD_TXT, "rel_path": MOD_TXT, "ext": "txt",
              "pages_before": 1, "pages_after": 1, "expected_status": "reingest", "groups": G111},
         ],
         "added": [
-            {"key": ADD_PDF, "rel_path": SHORTCUT_ROOT + ADD_PDF, "ext": "pdf",
+            {"key": ADD_PDF, "rel_path": ADD_PDF, "ext": "pdf",
              "pages_before": 0, "pages_after": 2, "expected_status": "new", "groups": G111},
         ],
         "deleted": [
-            {"key": DEL_PDF, "rel_path": SHORTCUT_ROOT + DEL_PDF, "ext": "pdf",
+            {"key": DEL_PDF, "rel_path": DEL_PDF, "ext": "pdf",
              "expected_status": "deleted", "groups": G111},
         ],
     }
