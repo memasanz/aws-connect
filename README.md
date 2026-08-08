@@ -40,24 +40,36 @@ Notebooks are named `nb_<role>_<NN>_<name>` so the role is obvious and each grou
 
 ## Deploying to Fabric
 
+> **First provision the Azure resources.** Run `infra/deploy.ps1` (Bicep) to create Key Vault,
+> Document Intelligence, Azure OpenAI + `text-embedding-3-large`, and Azure AI Search, grant the
+> data-plane RBAC roles, and seed the Search admin key into Key Vault — see [`infra/README.md`](infra/README.md)
+> and [`SETUP.md`](SETUP.md) §2. The steps below wire the notebooks up afterward.
+
 1. Import the `notebooks/*.ipynb` into your Fabric workspace and attach them to a lakehouse
    (this build used `aws_connect_lh`).
 2. **Pick a source mode** (config `source_mode`):
-   - `s3_shortcut` (default) — create an S3 shortcut under `Files/` pointing at your bucket
-     (this build: `Files/s3_mmx_bucket`).
-   - `s3_direct` — **no shortcut needed**; the pipeline reads straight from S3 over REST + AWS SigV4
-     (stdlib only, no `boto3`). Set `s3_endpoint_url`, `s3_region`, `s3_bucket`, `s3_prefix`, and the
-     Key Vault secret names `s3_access_key_secret` / `s3_secret_key_secret`. See *Source modes* below.
-3. Store DI / Azure OpenAI / AI Search keys in Key Vault and set the `kv_*`, endpoint, and
-   deployment values in the `config` table (`nb_setup_01_bootstrap` seeds defaults from
-   `config/config_defaults.json`).
-4. **Set endpoints without committing them:** in Fabric, copy `nb_setup_02_set_config` to a
+   - `s3_direct` (**default**) — **no shortcut needed**; the pipeline reads straight from S3 over
+     REST + AWS SigV4 (stdlib only, no `boto3`). Set `s3_endpoint_url`, `s3_region`, `s3_bucket`,
+     `s3_prefix`, and the Key Vault secret names `s3_access_key_secret` / `s3_secret_key_secret`.
+     See *Source modes* below.
+   - `s3_shortcut` — create an S3 shortcut under `Files/` pointing at your bucket
+     (this build also validated `Files/s3_mmx_bucket`).
+3. **Grant the Fabric identity Azure roles** (the user or workspace identity that runs the
+   notebooks): **Key Vault Secrets User** on the vault (so `getSecret` works — without it every
+   secret fetch 403s), plus **Cognitive Services User** (Document Intelligence), **Cognitive
+   Services OpenAI User** (Azure OpenAI), and **Search Index Data Contributor** (AI Search).
+   See `SETUP.md` §2 for the full role table.
+4. Store DI / Azure OpenAI / AI Search keys in Key Vault and set the `kv_*`, endpoint, and
+   deployment values in the `config` table (`nb_setup_01_bootstrap` seeds defaults from its inline
+   `DEFAULT_CONFIG` dict). If your Key Vault has *public network access disabled*, Fabric's
+   `getSecret` returns **403** — enable public access or add a firewall exception.
+5. **Set endpoints without committing them:** in Fabric, copy `nb_setup_02_set_config` to a
    `_local_set_config` notebook (the `notebooks/_local_*.ipynb` name is gitignored), fill in your real
    endpoints, and Run All. The committed `nb_setup_02` is a **placeholders-only template** — real endpoints
    live only in the `config` Delta table, never in git. See *Config hygiene* below.
-5. Upload your `acls.json` to `Files/acls/acls.json` (see `config/acls.example.json`).
-6. Run `nb_setup_01_bootstrap`, then `nb_setup_03_create_search_index`.
-7. Build pipeline `pl_ingest` = [`nb_pipeline_01_metadata_delta` → `nb_pipeline_02_ingest_to_index`] and schedule it.
+6. Upload your `acls.json` to `Files/acls/acls.json` (see `config/acls.example.json`).
+7. Run `nb_setup_01_bootstrap`, then `nb_setup_03_create_search_index`.
+8. Build pipeline `pl_ingest` = [`nb_pipeline_01_metadata_delta` → `nb_pipeline_02_ingest_to_index`] and schedule it.
    For the first load set `backfill_mode=true` in `config`.
 
 See `PRODUCT_SPEC.md` for the architecture, data model, ACL model, and scale/parallelism strategy.
@@ -69,8 +81,8 @@ of the pipeline (change detection, ACLs, chunking, indexing) is identical either
 
 | `source_mode` | How files are read | Needs a shortcut? | Extra config |
 | --- | --- | --- | --- |
-| `s3_shortcut` (default) | Fabric OneLake S3 shortcut under `Files/` (`shortcut_root`) via `binaryFile` | Yes | `shortcut_root` |
-| `s3_direct` | Directly from S3 over REST + **AWS SigV4** (stdlib `hashlib`/`hmac`, no `boto3`, no `%pip`) | No | `s3_endpoint_url`, `s3_region`, `s3_bucket`, `s3_prefix`, `s3_addressing` (`path`\|`virtual`), `s3_verify_tls`, `s3_access_key_secret`, `s3_secret_key_secret` |
+| `s3_direct` (default) | Directly from S3 over REST + **AWS SigV4** (stdlib `hashlib`/`hmac`, no `boto3`, no `%pip`) | No | `s3_endpoint_url`, `s3_region`, `s3_bucket`, `s3_prefix`, `s3_addressing` (`path`\|`virtual`), `s3_verify_tls`, `s3_access_key_secret`, `s3_secret_key_secret` |
+| `s3_shortcut` | Fabric OneLake S3 shortcut under `Files/` (`shortcut_root`) via `binaryFile` | Yes | `shortcut_root` |
 
 `s3_direct` works with any S3-compatible endpoint (AWS, Cohesity, MinIO, …). File **identity is the
 same in both modes** — `file_path` is the *src_key* (object path relative to the bucket root) — so you
@@ -78,7 +90,7 @@ can switch modes without changing ACLs or the change-detection scheme. Keys for 
 from Key Vault by the secret **names** above (never committed).
 
 **Index metadata:** each chunk also carries `folder_path` (filterable/facetable), `file_size`, and
-`last_modified` (plus reserved `author`/`last_modified_by`) for folder faceting and filtering.
+`last_modified` (plus `author` from document properties and reserved `last_modified_by`) for folder faceting and filtering.
 
 ## Config hygiene (endpoints are not committed)
 

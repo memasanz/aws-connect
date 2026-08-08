@@ -1,24 +1,34 @@
 <#
-  Helper: import a local .ipynb into Fabric (bound to aws_connect_lh), run it, poll to completion.
+  Helper: import a local .ipynb into Fabric (bound to the configured lakehouse), run it, poll to completion.
   Usage:  .\scripts\run_fabric_nb.ps1 -Path notebooks\nb_setup_01_bootstrap.ipynb -DisplayName nb_setup_01_bootstrap
+  Workspace/Lakehouse come from the repo-root .env (FABRIC_WORKSPACE_ID / FABRIC_LAKEHOUSE_ID /
+  FABRIC_LAKEHOUSE_NAME) unless overridden with -Workspace/-Lakehouse. See .env.example.
   Prints the final job status. Reuses an existing item of the same displayName if present.
 #>
 param(
   [Parameter(Mandatory=$true)][string]$Path,
   [Parameter(Mandatory=$true)][string]$DisplayName,
-  [string]$Workspace = 'ef1eda73-0a00-4ad0-80b2-5eccf9a98a5f',
-  [string]$Lakehouse = '35f024b6-9a0e-44b0-9c3b-3a43260c8f51',
+  [string]$Workspace,
+  [string]$Lakehouse,
+  [string]$LakehouseName,
   [hashtable]$Parameters,
   [switch]$SkipRun
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_dotenv.ps1')
+if (-not $Workspace)     { $Workspace = $env:FABRIC_WORKSPACE_ID }
+if (-not $Lakehouse)     { $Lakehouse = $env:FABRIC_LAKEHOUSE_ID }
+if (-not $LakehouseName) { $LakehouseName = if ($env:FABRIC_LAKEHOUSE_NAME) { $env:FABRIC_LAKEHOUSE_NAME } else { 'aws_connect_lh' } }
+if (-not $Workspace -or -not $Lakehouse) {
+  throw "Set FABRIC_WORKSPACE_ID and FABRIC_LAKEHOUSE_ID in .env (see .env.example) or pass -Workspace/-Lakehouse."
+}
 function Fab-Token { az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv }
 
 $tok = Fab-Token
 $hdr = @{ Authorization = "Bearer $tok"; 'Content-Type' = 'application/json' }
 
 # Bind default lakehouse so /lakehouse/default and spark.table(config) resolve.
-$dep = @{ default_lakehouse = $Lakehouse; default_lakehouse_name = 'aws_connect_lh'; default_lakehouse_workspace_id = $Workspace }
+$dep = @{ default_lakehouse = $Lakehouse; default_lakehouse_name = $LakehouseName; default_lakehouse_workspace_id = $Workspace }
 $j = Get-Content -Raw $Path | ConvertFrom-Json
 $j.metadata | Add-Member -NotePropertyName dependencies -NotePropertyValue @{ lakehouse = $dep } -Force
 $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($j | ConvertTo-Json -Depth 50 -Compress)))

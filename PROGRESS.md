@@ -20,6 +20,7 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 | S10 | E2E incremental + AI Search quality test (+ config hygiene) | ✅ code done · E2E run deferred to S11 |
 | S11 | Dual source (S3 shortcut **or** direct S3) + index metadata fields | ✅ done · E2E green in `poc_ws_0808` |
 | S12 | Bug-fixes surfaced by the S11 clean-workspace E2E run | ✅ done |
+| S13 | Config single-sourcing + author extraction + all-filetype DI quality tests + slimmer index | 🏗️ code done · E2E pending in `poc_ws_0808c` |
 
 **Core build complete** (S0–S6). **Sprint 7** adds a live end-to-end test with real data + deployed
 Azure resources. **Sprint 8** hardens the pipeline for repeated stop/restart batch runs with strong
@@ -31,6 +32,22 @@ service endpoints from the git repo (config hygiene). **Sprint 11** lets the pip
 S3-compatible endpoint **directly** (REST + SigV4, no boto3) as an alternative to the OneLake S3
 shortcut, and enriches the Search index with folder-path + document metadata fields. The next
 end-to-end validation run targets a **clean Fabric workspace** (`poc_ws_0808`).
+
+### Sprint 13 plan — config single-sourcing + author + all-filetype quality + slimmer index
+Goal: eliminate config drift, populate the previously-empty `author`, prove Doc Intelligence
+extraction quality for **every** supported file type, and drop redundant index metadata. E2E targets
+a clean workspace (`poc_ws_0808c`).
+
+| # | Task | Status |
+| --- | --- | --- |
+| 13.1 | **Config single source of truth** — deleted `config/config_defaults.json` (it was never read; the bootstrap seeds from its inline `DEFAULT_CONFIG`, so the JSON could silently drift). Removed the dead `CONFIG_DEFAULTS_PATH`; repointed SETUP/README at the notebook | ✅ done |
+| 13.2 | **`source_mode` default = `s3_direct`** everywhere (inline `DEFAULT_CONFIG`, `gen_source` runtime fallback, docs). Mode is always sourced from the Fabric `config` table — never overridable via script/env/params | ✅ done |
+| 13.3 | **Effective-config echo** — `nb_pipeline_01`/`02` print the full config (sorted) at run start so historical runs are self-documenting (which `source_mode`/`backfill_mode`/chunk settings were used). Safe: config stores only secret *names* | ✅ done |
+| 13.4 | **Author extraction (stdlib only)** — populate `author` from document properties: Office `docProps/core.xml` `<dc:creator>` via `zipfile`, best-effort PDF `/Author`. No new packages in the pipeline | ✅ done |
+| 13.5 | **All-filetype DI quality tests** — test-data generator + E2E corpus now exercise every supported type (pdf, docx, pptx, xlsx, html, htm, txt, md) with an embedded `CONTENTMARKER-<EXT>`; `nb_ops_03` group E asserts per-type marker extraction, contiguous chunk completeness (0..K-1 == `ingestion_state`), and Office author | ✅ done |
+| 13.6 | **Slimmer index** — removed `embedding_model` field from the Search index schema + doc payload (still generated + stored as `content_vector`; `embedding_model` kept in Delta `ingestion_state`/`ingestion_log` for re-embed detection). `nb_setup_03` now recreates the index if a schema change isn't updatable in place | ✅ done |
+| 13.7 | **Deployment docs** — surfaced `infra/deploy.ps1` (Option A automated deploy) in SETUP/README; corrected stale keyless-only infra prose to the actual hybrid model; added Key Vault Secrets User grant to README quick-start | ✅ done |
+| 13.8 | **E2E in clean workspace `poc_ws_0808c`** | 🏗️ pending |
 
 ### Sprint 11 plan — dual S3 source + index metadata fields
 Goal: read source files either via the existing **Fabric S3 shortcut** or **directly from S3**

@@ -48,9 +48,38 @@ Notebooks are named `nb_<role>_<NN>_<name>` so their job is obvious:
 
 ## 2. Create the Azure resources & assign roles
 
-Create these once (any names you like), then assign the running identity the listed role. Auth is
-**hybrid**: Document Intelligence and Azure OpenAI use **keyless Entra** (no keys stored); Azure AI
-Search uses an **admin key** read from Key Vault at runtime.
+Auth is **hybrid**: Document Intelligence and Azure OpenAI use **keyless Entra** (Fabric mints tokens
+via `notebookutils`, no keys stored); Azure AI Search uses an **admin key** read from Key Vault at
+runtime (its token audience isn't issuable in Fabric).
+
+### Option A — automated (recommended)
+
+A Bicep template provisions everything in one shot. From a machine with the Azure CLI:
+
+```powershell
+az login
+cd infra
+./deploy.ps1 -ResourceGroup rg-aws-connect -Location eastus2
+```
+
+`infra/deploy.ps1` (see `infra/README.md`) creates a resource group and deploys `infra/main.bicep`,
+which:
+
+- Provisions **Key Vault**, **Document Intelligence**, **Azure OpenAI** + a `text-embedding-3-large`
+  deployment, and **Azure AI Search** (RBAC/AAD data-plane enabled).
+- Grants the **signed-in user** the three data-plane roles below **and** Key Vault secret *get*.
+- Stores the Search **admin key** into Key Vault as `search-admin-key` for you, and adds a Key Vault
+  public-network policy exemption so Fabric's `getSecret` works.
+- Prints (and writes to `infra/deployment-outputs.json`) the `kv_name`, `doc_intelligence_endpoint`,
+  `aoai_endpoint`, `aoai_embedding_deployment`, and `search_endpoint` values to paste into `config`.
+
+After it finishes you still need to: add your **S3 keys** to Key Vault (step 3), and — if the identity
+that *runs the Fabric notebooks* is different from the user who ran the deploy (e.g. a scheduled
+pipeline's workspace identity) — grant **that** identity the same roles below.
+
+### Option B — manual (or reference of required roles)
+
+Create these once (any names you like), then assign the running identity the listed role:
 
 | Resource | Why | Role to grant the identity running the notebooks |
 | --- | --- | --- |
@@ -74,11 +103,13 @@ Create these secrets in your Key Vault (names are configurable in `config`, defa
 
 | Secret name (default) | Value | Needed when |
 | --- | --- | --- |
-| `search-admin-key` | Azure AI Search **admin** key | always |
+| `search-admin-key` | Azure AI Search **admin** key | always (auto-created by the Option A deploy) |
 | `s3-access-key` | AWS access key id | only if `source_mode = s3_direct` |
 | `s3-secret-key` | AWS secret access key | only if `source_mode = s3_direct` |
 
-No secret values ever live in the repo or the `config` table — only the **secret names** do.
+No secret values ever live in the repo or the `config` table — only the **secret names** do. If you
+used the **Option A** Bicep deploy, `search-admin-key` is already populated — you only add the two S3
+secrets here.
 
 ---
 
@@ -86,28 +117,58 @@ No secret values ever live in the repo or the `config` table — only the **secr
 
 There are two source modes. Pick one and set `source_mode` in config accordingly.
 
-- **`s3_shortcut`** (default) — In Fabric, create a **OneLake shortcut** under your Lakehouse's
-  `Files/` that points at your S3 bucket (e.g. `Files/s3_mmx_bucket`). Set `shortcut_root` to that
-  path. Fabric handles the S3 auth for the shortcut; you don't need the S3 keys in Key Vault.
-- **`s3_direct`** — **No shortcut needed.** The pipeline reads straight from S3 over REST + AWS
-  **SigV4** (standard library only, no `boto3` in Fabric). Set `s3_endpoint_url`, `s3_region`,
-  `s3_bucket`, `s3_prefix`, and put the S3 keys in Key Vault (step 3). **Watch the region** — the
-  endpoint must match the bucket's region (e.g. `https://s3.us-east-2.amazonaws.com`), or S3 returns
-  a redirect.
+- **`s3_direct`** (default, recommended) — **No shortcut needed.** The pipeline reads straight from
+  S3 over REST + AWS **SigV4** (standard library only, no `boto3` in Fabric). Set `s3_endpoint_url`,
+  `s3_region`, `s3_bucket`, `s3_prefix`, and put the S3 keys in Key Vault (step 3). **Watch the
+  region** — the endpoint must match the bucket's region (e.g. `https://s3.us-east-2.amazonaws.com`),
+  or S3 returns a redirect.
+- **`s3_shortcut`** — In Fabric, create a **OneLake shortcut** under your Lakehouse's `Files/` that
+  points at your S3 bucket (e.g. `Files/s3_mmx_bucket`). Set `shortcut_root` to that path. Fabric
+  handles the S3 auth for the shortcut; you don't need the S3 keys in Key Vault.
 
-Not sure which? `s3_shortcut` is the least config; `s3_direct` avoids creating a shortcut and keeps
-everything in code — handy for locked-down or automated setups.
+Not sure which? `s3_direct` (the default) keeps everything in code and needs no shortcut — the
+simplest path for locked-down or automated setups. Choose `s3_shortcut` if you prefer Fabric to
+manage S3 auth via a shortcut.
 
 ---
 
-## 5. Install & configure (the main event)
+## 5. First-time bootstrap checklist
+
+Do these once, **in order**, to go from an empty workspace to a populated, secured index. Each item
+links to the detailed step below.
+
+- [ ] **① Create a Lakehouse** named `aws_connect_lh` in your Fabric workspace. *(The run scripts
+      expect this exact name.)*
+- [ ] **② Import the notebooks** (`notebooks/nb_*.ipynb`) into the workspace and attach them to that
+      Lakehouse.
+- [ ] **③ Assign Azure roles** to the running identity and **create the Key Vault secrets** (steps 2–3
+      above) — do this before running anything that touches DI / Azure OpenAI / Search / S3.
+- [ ] **④ Bootstrap tables:** run **`nb_setup_01_bootstrap`** → creates `config` + all Delta tables.
+- [ ] **⑤ Set your config:** copy `nb_setup_02_set_config` → `_local_set_config` (gitignored), fill in
+      your endpoints + `source_mode` + S3 settings + `search_index_name`, **Run All**.
+- [ ] **⑥ Upload ACLs:** put your `acls.json` at `Files/acls/acls.json` (from `config/acls.example.json`).
+- [ ] **⑦ Create the index:** run **`nb_setup_03_create_search_index`**.
+- [ ] **⑧ First ingest:** run **`nb_pipeline_01_metadata_delta`** then **`nb_pipeline_02_ingest_to_index`**
+      (set `backfill_mode=true` in `config` for the very first load).
+- [ ] **⑨ Verify:** run **`nb_ops_01_status`** — confirm files are `complete` and the live Search count
+      is non-zero. Optionally run the E2E test (section 8).
+
+> **CLI shortcut (optional):** you can create the Lakehouse and run each notebook headlessly instead of
+> clicking through Fabric. Create the Lakehouse with a `POST` to
+> `https://api.fabric.microsoft.com/v1/workspaces/<ws-guid>/lakehouses` (body `{"displayName":"aws_connect_lh"}`),
+> then run any notebook with
+> `pwsh -Command "& { .\scripts\run_fabric_nb.ps1 -Path notebooks\nb_setup_01_bootstrap.ipynb -DisplayName nb_setup_01_bootstrap -Workspace <ws-guid> -Lakehouse <lakehouse-guid> }"`.
+
+---
+
+## 6. Install & configure (the details)
 
 1. **Import the notebooks.** Upload every `notebooks/nb_*.ipynb` into your Fabric workspace and
    **attach them to a Lakehouse** (create one, e.g. `aws_connect_lh`). All notebooks read/write
    Delta tables in this Lakehouse.
 
 2. **Bootstrap the tables.** Run **`nb_setup_01_bootstrap`**. It creates the `config` table (seeded
-   with the defaults from `config/config_defaults.json`) and all the pipeline Delta tables.
+   with the defaults from the notebook's inline `DEFAULT_CONFIG`) and all the pipeline Delta tables.
 
 3. **Point config at *your* endpoints — without committing them.** The committed
    **`nb_setup_02_set_config`** is a **template with placeholders only**. Copy it in Fabric to a
@@ -117,7 +178,7 @@ everything in code — handy for locked-down or automated setups.
    table. A `MERGE` preserves your overrides across future `nb_setup_01` re-runs, so you only do this
    once. Real endpoints live **only** in the `config` table, never in git.
 
-   Key config values to set (full list in `config/config_defaults.json`):
+   Key config values to set (full list in the `DEFAULT_CONFIG` dict in `nb_setup_01_bootstrap`):
    - `source_mode` + (`shortcut_root`) **or** (`s3_endpoint_url`, `s3_region`, `s3_bucket`, `s3_prefix`)
    - `doc_intelligence_endpoint`, `aoai_endpoint`, `aoai_embedding_deployment`, `search_endpoint`
    - `search_index_name` (e.g. `docs-rag`), `kv_name`, and the `*_secret` names if you changed them
@@ -146,7 +207,7 @@ That's it. Your index is populated and secured.
 
 ---
 
-## 6. Verify & operate
+## 7. Verify & operate
 
 - **Check status any time:** run **`nb_ops_01_status`** — queue breakdown, errors, throughput,
   throttling, and the live Search document count. Section 1b shows a live progress panel while an
@@ -165,7 +226,7 @@ happens in your app.
 
 ---
 
-## 7. (Optional) Run the automated end-to-end test
+## 8. (Optional) Run the automated end-to-end test
 
 Want proof the whole thing works before trusting it? The repo ships a self-checking E2E test.
 
@@ -185,7 +246,7 @@ Want proof the whole thing works before trusting it? The repo ships a self-check
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
@@ -199,10 +260,10 @@ Want proof the whole thing works before trusting it? The repo ships a self-check
 
 ---
 
-## 9. Where things live
+## 10. Where things live
 
 - **Notebooks:** `notebooks/nb_<role>_<NN>_<name>.ipynb`
-- **Config defaults / template:** `config/config_defaults.json`, `notebooks/nb_setup_02_set_config.ipynb`
+- **Config defaults / template:** `nb_setup_01_bootstrap` (inline `DEFAULT_CONFIG`), `notebooks/nb_setup_02_set_config.ipynb`
 - **ACL example:** `config/acls.example.json`
 - **Architecture & data model:** `PRODUCT_SPEC.md`
 - **Change history:** `PROGRESS.md`

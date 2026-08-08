@@ -21,14 +21,21 @@
           .\scripts\run_e2e_test.ps1 -SkipSeed   # reuse the corpus already in S3
 #>
 param(
-  [string]$Workspace = 'ef1eda73-0a00-4ad0-80b2-5eccf9a98a5f',
-  [string]$Lakehouse = '35f024b6-9a0e-44b0-9c3b-3a43260c8f51',
-  [string]$Python = '.\.venv\Scripts\python.exe',
+  [string]$Workspace,
+  [string]$Lakehouse,
+  [string]$Python,
   [string]$OutDir = '.e2e',
   [switch]$SkipSeed
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot '_dotenv.ps1')
+if (-not $Workspace) { $Workspace = $env:FABRIC_WORKSPACE_ID }
+if (-not $Lakehouse) { $Lakehouse = $env:FABRIC_LAKEHOUSE_ID }
+if (-not $Python)    { $Python = if ($env:E2E_PYTHON) { $env:E2E_PYTHON } else { '.\.venv\Scripts\python.exe' } }
+if (-not $Workspace -or -not $Lakehouse) {
+  throw "Set FABRIC_WORKSPACE_ID and FABRIC_LAKEHOUSE_ID in .env (see .env.example) or pass -Workspace/-Lakehouse."
+}
 Set-Location $repo
 $nb = Join-Path $repo 'notebooks'
 

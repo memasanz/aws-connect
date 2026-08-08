@@ -186,7 +186,7 @@ Created-if-missing with defaults by `nb_setup_01_bootstrap` (or nb_pipeline_01).
 | `embedding_dimensions` | `3072` | vector length |
 | `search_endpoint` | `https://x.search.windows.net` | AI Search endpoint |
 | `search_index_name` | `docs-rag` | target index |
-| `source_mode` | `s3_shortcut` | source reader: `s3_shortcut` (OneLake shortcut) or `s3_direct` (REST + SigV4) |
+| `source_mode` | `s3_direct` | source reader: `s3_direct` (REST + SigV4, default) or `s3_shortcut` (OneLake shortcut) |
 | `shortcut_root` | `Files/s3_mmx_bucket` | shortcut path root (used by `s3_shortcut`) |
 | `s3_endpoint_url` | `https://s3.us-east-2.amazonaws.com` | S3-compatible endpoint (`s3_direct`) |
 | `s3_region` | `us-east-2` | SigV4 signing region (`s3_direct`) |
@@ -237,9 +237,11 @@ change-detection metadata, maintain `file_metadata`.
 `chunk_id` (key), `file_path`, `file_name`, `file_extension`, `content` (searchable),
 `content_vector` (vector, `embedding_dimensions`), `page_number`, `chunk_index`,
 `folder_path` (filterable/facetable), `file_size` (Int64), `last_modified` (DateTimeOffset),
-`author`, `last_modified_by` (reserved), `allowed_groups` (collection, filterable),
-`embedding_model`, `chunk_strategy_version`, `indexed_utc`.
+`author` (from document properties), `last_modified_by` (reserved), `allowed_groups` (collection, filterable),
+`chunk_strategy_version`, `indexed_utc`.
 Vector config: HNSW; optional semantic ranker.
+(`embedding_model` is tracked in the `ingestion_state`/`ingestion_log` Delta tables for re-embed
+detection, but is intentionally **not** a field on the Search index.)
 > **Note:** `last_modified` must be a UTC-offset ISO-8601 value (`…+00:00`/`Z`); a naive timestamp is
 > rejected by Search (`Edm.DateTimeOffset`) and fails the whole upload batch — `nb_pipeline_02` normalizes it.
 
@@ -280,7 +282,7 @@ Vector config: HNSW; optional semantic ranker.
      chunking where `pageOverlapLength` is 0). A page longer than `chunk_size` chars is split into
      multiple non-overlapping chunks that keep the same page number (safety cap for embedding limits).
   7. Embed via Azure OpenAI.
-  8. Push chunks (+ `allowed_groups`, `embedding_model`, `chunk_strategy_version`) to Search.
+  8. Push chunks (+ `allowed_groups`, `chunk_strategy_version`) to Search.
   9. Update `ingestion_state`, write `ingestion_log`, set `complete`.
 - **Errors:** increment `retry_count`; ≥ `max_retries` → `dead_letter` + `skipped_log`; else `error`.
 - **Parallelism & durability:** two-phase — network-heavy work (DI/embed/Search) fans out in a

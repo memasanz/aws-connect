@@ -5,13 +5,14 @@
 
 .DESCRIPTION
   Creates a resource group and deploys infra/main.bicep:
-    - Key Vault (for any non-service secrets; no service keys under keyless auth)
+    - Key Vault (holds the AI Search admin key, auto-seeded; you add S3 keys later)
     - Document Intelligence
     - Azure OpenAI (Foundry) + text-embedding-3-large deployment
     - Azure AI Search (AAD/RBAC data-plane enabled)
-  Auth is KEYLESS (Entra ID): the bicep grants the signed-in user the data-plane RBAC roles
-  (Cognitive Services User, Cognitive Services OpenAI User, Search Index Data Contributor) so the
-  Fabric notebooks (run interactively as that user) authenticate with DefaultAzureCredential.
+  Auth is HYBRID: DI and Azure OpenAI are keyless (Fabric notebooks get an Entra token via
+  notebookutils); Azure AI Search uses an admin key read from Key Vault at runtime. The bicep grants
+  the signed-in user the data-plane RBAC roles (Cognitive Services User, Cognitive Services OpenAI
+  User, Search Index Data Contributor) plus Key Vault secret get.
 
 .EXAMPLE
   ./deploy.ps1 -ResourceGroup rg-aws-connect -Location eastus2
@@ -50,10 +51,13 @@ Write-Host ("  aoai_endpoint               = {0}" -f $out.aoaiEndpoint.value)
 Write-Host ("  aoai_embedding_deployment   = {0}" -f $out.embeddingDeployment.value)
 Write-Host ("  search_endpoint             = {0}" -f $out.searchEndpoint.value)
 Write-Host ""
-Write-Host "Auth is keyless (Entra ID): data-plane RBAC roles were granted to $oid by the deployment."
+Write-Host "Auth is hybrid: DI + Azure OpenAI are keyless (Entra tokens via notebookutils); AI Search"
+Write-Host "uses an admin key stored in Key Vault ('search-admin-key', auto-seeded by this deploy)."
+Write-Host "Data-plane RBAC roles granted to $oid by the deployment:"
 Write-Host "  DI    -> Cognitive Services User"
 Write-Host "  AOAI  -> Cognitive Services OpenAI User"
 Write-Host "  Search-> Search Index Data Contributor"
+Write-Host "Next: add your S3 keys to Key Vault ('s3-access-key' / 's3-secret-key') for s3_direct."
 Write-Host "===================================================="
 $cfg = [ordered]@{
   kv_name                   = $out.kvName.value

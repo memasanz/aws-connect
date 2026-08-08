@@ -38,7 +38,8 @@ import boto3
 
 # Reuse the deterministic doc builders (page markers, "Page p of N" headers) from gen_testdocs.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gen_testdocs import multipage_pdf, make_docx, make_txt  # noqa: E402
+from gen_testdocs import (multipage_pdf, make_docx, make_txt, make_md,  # noqa: E402
+                          make_pptx, make_xlsx, make_html, AUTHOR)
 
 BUCKET = "mmx-amazon-s3-bucket"
 PROFILE = "s3-bucket"
@@ -52,13 +53,19 @@ G222 = ["22222222-2222-2222-2222-222222222222"]
 G333 = ["33333333-3333-3333-3333-333333333333"]
 G334 = ["33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444"]
 
-# Corpus layout: (folder_under_testset, groups, ingested?, n_pdf, n_txt, n_docx)
+# Office formats carry an author in docProps/core.xml; the pipeline extracts it into the index.
+OFFICE_EXTS = {"docx", "pptx", "xlsx"}
+
+# Corpus layout: (folder_under_testset, groups, ingested?, {ext: count}).
+# finance/policies exercises EVERY Doc-Intelligence-supported type so the E2E verifies extraction
+# quality per file type (pdf, docx, pptx, xlsx, html, htm, md) under an ACL; finance/reports covers txt.
 LAYOUT = [
-    ("finance/reports",   G111, True,  45, 5, 0),   # 50 -> bulk finance
-    ("finance/policies",  G222, True,   8, 0, 2),   # 10 -> policies (2 docx)
-    ("hr",                G333, True,  20, 0, 0),   # 20 -> hr general
-    ("hr/onboarding",     G334, True,  12, 0, 0),   # 12 -> onboarding (dual group)
-    ("engineering",       [],   False,  8, 0, 0),   # 8  -> no_acl skip path
+    ("finance/reports",   G111, True,  {"pdf": 45, "txt": 5}),                                  # 50
+    ("finance/policies",  G222, True,  {"pdf": 6, "docx": 2, "pptx": 1, "xlsx": 1,              # 13
+                                        "html": 1, "htm": 1, "md": 1}),
+    ("hr",                G333, True,  {"pdf": 20}),                                            # 20
+    ("hr/onboarding",     G334, True,  {"pdf": 12}),                                            # 12
+    ("engineering",       [],   False, {"pdf": 8}),                                             # 8 no_acl skip
 ]
 
 TITLE = {
@@ -74,29 +81,43 @@ def _slug(folder):
     return folder.replace("/", "-")
 
 
+def _name(slug, ext, i):
+    if ext == "pdf":
+        return f"{slug}-{i:03d}.pdf"
+    if ext == "txt":
+        return f"{slug}-note-{i:03d}.txt"
+    if ext == "docx":
+        return f"{slug}-policy-{i:03d}.docx"
+    return f"{slug}-{ext}-{i:03d}.{ext}"
+
+
+def _pages(ext, i):
+    # PDFs cycle 1/2/3 pages; text-read types are one page; DI-decided types are not asserted (None).
+    if ext == "pdf":
+        return (i % 3) + 1
+    if ext in ("txt", "md"):
+        return 1
+    return None
+
+
 def canonical_manifest():
     """Deterministic description of every generated file (no I/O)."""
     items = []
-    for folder, groups, ingested, n_pdf, n_txt, n_docx in LAYOUT:
+    for folder, groups, ingested, counts in LAYOUT:
         slug = _slug(folder)
         key_dir = f"{PREFIX}{folder}/{E2E}/"
-        for i in range(n_pdf):
-            pages = (i % 3) + 1  # 1,2,3 cycling
-            name = f"{slug}-{i:03d}.pdf"
-            items.append(_item(key_dir + name, folder, groups, ingested, "pdf", pages))
-        for i in range(n_txt):
-            name = f"{slug}-note-{i:03d}.txt"
-            items.append(_item(key_dir + name, folder, groups, ingested, "txt", 1))
-        for i in range(n_docx):
-            name = f"{slug}-policy-{i:03d}.docx"
-            # docx page count is decided by Doc Intelligence; not asserted strictly (pages=None).
-            items.append(_item(key_dir + name, folder, groups, ingested, "docx", None))
+        for ext, n in counts.items():
+            for i in range(n):
+                name = _name(slug, ext, i)
+                items.append(_item(key_dir + name, folder, groups, ingested, ext, _pages(ext, i)))
     return items
 
 
 def _item(key, folder, groups, ingested, ext, pages):
     # rel_path is the src_key (object path relative to the bucket root) = the identity nb_pipeline_02 stamps
     # as file_path in both source modes. nb_ops_03 matches on it directly.
+    # content_marker: the token embedded in the file body (see gen_testdocs.marker) so the verify
+    # step can prove correct per-file-type extraction reached AI Search.
     return {
         "key": key,
         "rel_path": key,
@@ -105,6 +126,8 @@ def _item(key, folder, groups, ingested, ext, pages):
         "pages": pages,
         "groups": groups,
         "ingested": bool(ingested),
+        "author": (AUTHOR if ext in OFFICE_EXTS else None),
+        "content_marker": f"CONTENTMARKER-{ext.upper()}",
     }
 
 
@@ -113,12 +136,23 @@ def _build_local(item, stage):
     local = os.path.join(stage, item["key"].replace("/", os.sep))
     os.makedirs(os.path.dirname(local), exist_ok=True)
     title = f'{TITLE[item["folder"]]} {os.path.basename(item["key"])}'
-    if item["ext"] == "pdf":
+    ext = item["ext"]
+    if ext == "pdf":
         multipage_pdf(local, title, item["pages"])
-    elif item["ext"] == "txt":
+    elif ext == "txt":
         make_txt(local, title, 12)
-    elif item["ext"] == "docx":
+    elif ext == "md":
+        make_md(local, title, 12)
+    elif ext == "docx":
         make_docx(local, title, 6)
+    elif ext == "pptx":
+        make_pptx(local, title, 3)
+    elif ext == "xlsx":
+        make_xlsx(local, title)
+    elif ext in ("html", "htm"):
+        make_html(local, title)
+    else:
+        raise ValueError(f"no generator for ext {ext!r}")
     return local
 
 

@@ -11,6 +11,7 @@ downloads/
 # Credentials - never commit
 .env
 *.env
+!.env.example
 **/config.json
 aws-credentials*
 *.pem
