@@ -237,7 +237,7 @@ change-detection metadata, maintain `file_metadata`.
 `chunk_id` (key), `file_path`, `file_name`, `file_extension`, `content` (searchable),
 `content_vector` (vector, `embedding_dimensions`), `page_number`, `chunk_index`,
 `folder_path` (filterable/facetable), `file_size` (Int64), `last_modified` (DateTimeOffset),
-`author` (from document properties), `last_modified_by` (reserved), `allowed_groups` (collection, filterable),
+`author` (from document properties), `last_modified_by` (reserved), `allowed_groups` (collection, filterable, **not retrievable**),
 `chunk_strategy_version`, `indexed_utc`.
 Vector config: HNSW; optional semantic ranker.
 (`embedding_model` is tracked in the `ingestion_state`/`ingestion_log` Delta tables for re-embed
@@ -352,6 +352,24 @@ status queue. Deletion is detected via stale `last_seen_utc`.
   filters on the caller's group membership.
 - **ACL drift:** `acl_version` tracked per file; ACL-only change → re-stamp `allowed_groups`
   (no DI/embeddings).
+
+### 10.1 Query-time enforcement responsibilities (for the retrieval app)
+This follows the Azure AI Search **group-identifier security-trimming** pattern: `allowed_groups`
+is a `filterable`, **non-`retrievable`** `Collection(Edm.String)` (retrievable:false keeps the ACL
+list out of query responses, per MS guidance), and every query applies
+`allowed_groups/any(g: search.in(g, '<caller-group-guids>'))` (see `nb_ops_04_search_examples`).
+Azure AI Search has **no built-in per-document identity enforcement** — trimming is a query filter,
+so security holds only if the application that queries the index enforces the following. These are
+the responsibility of whoever builds the retrieval/agent app, not the ingestion pipeline:
+1. **Always inject the trimming filter.** A query sent without
+   `allowed_groups/any(g: search.in(g, ...))` returns **all** chunks. Never issue an untrimmed
+   query on behalf of a user (untrimmed queries are for admin/reporting only).
+2. **Keep the Search key server-side.** Resolve the caller's real Entra **group** GUIDs in a trusted
+   middle tier (e.g. Microsoft Graph / OBO flow) and build the filter there. Never hand an
+   admin/query key to the client or let the client supply its own group list — either lets a caller
+   omit the filter and bypass trimming.
+3. **Resolve group membership fresh per request** (or short-cached) so revoked access takes effect
+   promptly; stale cached memberships extend access beyond revocation.
 
 ---
 
