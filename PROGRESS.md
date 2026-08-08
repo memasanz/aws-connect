@@ -18,7 +18,8 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 | S8 | Batch durability hardening: stuck-file reclaim-as-retry, stop/restart, visibility | ✅ done |
 | S9 | Scale hardening: endpoint pools, batched status writes, throttle visibility | ✅ done |
 | S10 | E2E incremental + AI Search quality test (+ config hygiene) | ✅ code done · E2E run deferred to S11 |
-| S11 | Dual source (S3 shortcut **or** direct S3) + index metadata fields | 🏗️ in progress |
+| S11 | Dual source (S3 shortcut **or** direct S3) + index metadata fields | ✅ done · E2E green in `poc_ws_0808` |
+| S12 | Bug-fixes surfaced by the S11 clean-workspace E2E run | ✅ done |
 
 **Core build complete** (S0–S6). **Sprint 7** adds a live end-to-end test with real data + deployed
 Azure resources. **Sprint 8** hardens the pipeline for repeated stop/restart batch runs with strong
@@ -38,11 +39,21 @@ useful metadata) to the Search index. Then run the E2E in a clean workspace.
 
 | # | Task | Status |
 | --- | --- | --- |
-| 11.1 | **Dual source abstraction** — `source_mode = s3_shortcut \| s3_direct`; a small source interface (`list_files()` / `read_bytes()`) with two implementations selected by config | ⏳ todo |
-| 11.2 | **Direct S3 via REST + SigV4** — sign requests with stdlib `hashlib`/`hmac` (no `boto3`, no `%pip`); path-style addressing; `s3_endpoint_url`, `s3_bucket`, `s3_prefix`, `s3_region`, `s3_verify_tls`; keys from Key Vault secret names | ⏳ todo |
-| 11.3 | **Stable path identity** — normalized relative key (relative to prefix) as `file_path` identity so change-detection + `chunk_id` + ACL folder resolution behave the same in both modes (a mode switch that changes the scheme forces a re-index — documented) | ⏳ todo |
-| 11.4 | **Index metadata fields** — add `folder_path` (filterable/facetable) + `file_size`, `last_modified` from source listing; `author`/`last_modified_by` from S3 object metadata when present (else blank). Update `nb_02` schema, `nb_03` doc build, `nb_08` examples | ⏳ todo |
-| 11.5 | **E2E in clean workspace `poc_ws_0808`** — parameterize workspace/lakehouse ids; bootstrap → seed → 01 → 03 → 06/07; capture PASS/FAIL | ⏳ todo |
+| 11.1 | **Dual source abstraction** — `source_mode = s3_shortcut \| s3_direct`; a small source interface (`list_files()` / `read_bytes()`) with two implementations selected by config | ✅ done |
+| 11.2 | **Direct S3 via REST + SigV4** — sign requests with stdlib `hashlib`/`hmac` (no `boto3`, no `%pip`); path-style addressing; `s3_endpoint_url`, `s3_bucket`, `s3_prefix`, `s3_region`, `s3_verify_tls`; keys from Key Vault secret names | ✅ done |
+| 11.3 | **Stable path identity** — `file_path` = **src_key** (object path relative to the bucket root) in both modes so change-detection + `chunk_id` + ACL folder resolution behave identically; shortcut mode derives it by stripping the shortcut root | ✅ done |
+| 11.4 | **Index metadata fields** — added `folder_path` (filterable/facetable) + `file_size`, `last_modified` from source listing; `author`/`last_modified_by` reserved (nullable). Updated `nb_02` schema, `nb_03` doc build, `nb_08` examples | ✅ done |
+| 11.5 | **E2E in clean workspace `poc_ws_0808`** — bootstrap (lakehouse, config, isolated `docs-rag-0808` index) → reset → seed → 01 → 03 → 07 (baseline **13/13**) → mutate → 01 → 03 → 07 (incremental **18/18**). Ran in **s3_direct** mode (no shortcut). **All green** | ✅ done |
+
+### Sprint 12 — bug-fixes from the S11 E2E run
+The first clean-workspace E2E (s3_direct) surfaced three real bugs; each was root-caused, fixed, and
+re-verified until both phases went fully green. See the changelog for detail.
+
+| # | Bug | Symptom | Fix | Status |
+| --- | --- | --- | --- | --- |
+| 12.1 | **`nb_03` emitted a naive `last_modified`** (`2026-08-08T15:51:13`, no offset) | Azure Search rejected the whole upload batch → **400 `Cannot convert … to Edm.DateTimeOffset`** → 148 files `error`, index stayed empty, every quality/trimming check failed | Normalize `modified_datetime` to tz-aware UTC ISO-8601 (`…+00:00`) in `compute()` before `build_docs`; verified with a live single-doc upload probe | ✅ fixed |
+| 12.2 | **`nb_07` page-coverage self-join** on `ingestion_log` | `AnalysisException: Column file_path … are ambiguous` crashed the verifier before it could report (job `Failed`, generic `System_Cancelled_Session_Statements_Failed`) | Replace the `groupBy`+self-join with a `row_number()` window to pick the latest row per `file_path` | ✅ fixed |
+| 12.3 | **`nb_07` `[pN` marker check false-positive on `.txt`** | 5 `.txt` notes failed the "page N chunk contains `[pN`" check — plain-text notes have no page markers (only `multipage_pdf` injects them) | Scope the marker assertion to `.pdf` files; page-coverage (1..N) still applies to txt | ✅ fixed |
 
 ### Sprint 10 plan — E2E incremental + quality test (+ config hygiene)
 Goal: a **repeatable** end-to-end test that proves the whole pipeline — incremental change detection,
@@ -143,7 +154,35 @@ Goal: prove the whole pipeline on real data and deployed services.
 
 ## Changelog
 
-### Sprint 8 — batch durability, honest state & live visibility
+### Sprint 11 + 12 — dual S3 source, index metadata, and E2E green in `poc_ws_0808`
+- **Dual source mode** (`source_mode` config): read files either through the Fabric OneLake **S3
+  shortcut** (`s3_shortcut`) or **directly from S3 over REST + AWS SigV4** (`s3_direct`) — no `boto3`,
+  no `%pip`. Signing uses stdlib `hashlib`/`hmac`; config adds `s3_endpoint_url`, `s3_region`,
+  `s3_bucket`, `s3_prefix`, `s3_addressing`, `s3_verify_tls`, `s3_access_key_secret`,
+  `s3_secret_key_secret`. `nb_01` (listing) and `nb_03` (reads) switch on the mode; the shared source
+  layer is generated once (`files/gen_source.py`) and embedded in both.
+- **Stable identity across modes:** `file_path` = **src_key** (object path relative to the bucket
+  root) in both modes, so change-detection, `chunk_id`, and ACL folder resolution are mode-independent.
+  `config/acls.json` paths are now src_key-relative (dropped the `Files/s3_mmx_bucket/` prefix).
+- **Index metadata fields:** `folder_path` (filterable/facetable), `file_size`, `last_modified`, plus
+  reserved `author`/`last_modified_by`. Updated `nb_02` schema, `nb_03` `build_docs`, and `nb_08`
+  facet/query examples.
+- **First clean-workspace E2E (`poc_ws_0808`, s3_direct)** — bootstrapped an isolated lakehouse +
+  `docs-rag-0808` index; ran the full reset → baseline → mutate → incremental sequence. Final:
+  **baseline 13/13, incremental 18/18** — reconciliation, full page coverage, per-group security
+  trimming (g111=50, g222=10, g333=32, g444=12, g999=0, engineering excluded), and incremental
+  correctness (**only the 3 changed files reprocessed**, deleted file purged, modified PDF grew to 2p).
+- **Bugs found + fixed during that run (Sprint 12):**
+  - *DateTimeOffset 400 (critical):* `nb_03` sent a naive `last_modified`; Azure Search rejected the
+    entire batch (`Cannot convert '2026-08-08T15:51:13' to Edm.DateTimeOffset`) so **nothing indexed**.
+    Now normalized to tz-aware UTC (`…+00:00`) before upload.
+  - *`nb_07` self-join ambiguity:* the page-coverage "latest row per file" used a `groupBy`+self-join
+    that raised `Column file_path … ambiguous` and crashed the verifier; replaced with a `row_number()`
+    window.
+  - *`nb_07` `[pN` marker false-positive on `.txt`:* the "right text on right page" marker check only
+    applies to generated PDFs (plain-text notes carry no page markers); scoped it to `.pdf`.
+
+
 - **Batched drain loop** in `nb_03`: one invocation now claims `batch_size` (100) files at a time,
   processes + checkpoints them, then re-checks for more, draining the queue in bounded chunks with
   optional `max_batches_per_run` / `run_time_budget_min` caps. Replaces the single bulk pre-claim.

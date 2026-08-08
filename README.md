@@ -21,7 +21,7 @@ Tooling and a Microsoft Fabric solution for ingesting files from an Amazon S3 bu
 | --- | --- | --- |
 | `nb_00_bootstrap` | Create delta tables (`config`, `file_metadata`, `ingestion_state`, `ingestion_log`, `skipped_log`, `run_progress`, `throttle_log`) + seed config | Once, at setup / config change |
 | `nb_00b_set_config` | **Template** to point config at your endpoints (placeholders only — copy to a gitignored `_local_` notebook and fill real values) | Once, after `nb_00` |
-| `nb_01_metadata_delta` | Recursive S3-shortcut scan → change detection → `file_metadata` (new/reingest/deleted) | **Pipeline 1**, scheduled |
+| `nb_01_metadata_delta` | Recursive source scan (S3 shortcut **or** direct S3) → change detection → `file_metadata` (new/reingest/deleted) | **Pipeline 1**, scheduled |
 | `nb_02_create_search_index` | Create/upgrade the Azure AI Search index (HNSW vector + `allowed_groups`) | Once / on schema change |
 | `nb_03_ingest_to_index` | Status-queue ingestion: ACL gate → Doc Intelligence → chunk → embed → Search; deletions, retries; **endpoint pools + batched writes + throttle log** | **Pipeline 2**, scheduled |
 | `nb_04_acl_reconcile` | Re-stamp `allowed_groups` on ACL drift without re-ingesting | On-demand, after editing `acls.json` |
@@ -34,7 +34,12 @@ Tooling and a Microsoft Fabric solution for ingesting files from an Amazon S3 bu
 
 1. Import the `notebooks/*.ipynb` into your Fabric workspace and attach them to a lakehouse
    (this build used `aws_connect_lh`).
-2. Create an S3 shortcut under `Files/` pointing at your bucket (this build: `Files/s3_mmx_bucket`).
+2. **Pick a source mode** (config `source_mode`):
+   - `s3_shortcut` (default) — create an S3 shortcut under `Files/` pointing at your bucket
+     (this build: `Files/s3_mmx_bucket`).
+   - `s3_direct` — **no shortcut needed**; the pipeline reads straight from S3 over REST + AWS SigV4
+     (stdlib only, no `boto3`). Set `s3_endpoint_url`, `s3_region`, `s3_bucket`, `s3_prefix`, and the
+     Key Vault secret names `s3_access_key_secret` / `s3_secret_key_secret`. See *Source modes* below.
 3. Store DI / Azure OpenAI / AI Search keys in Key Vault and set the `kv_*`, endpoint, and
    deployment values in the `config` table (`nb_00_bootstrap` seeds defaults from
    `config/config_defaults.json`).
@@ -48,6 +53,24 @@ Tooling and a Microsoft Fabric solution for ingesting files from an Amazon S3 bu
    For the first load set `backfill_mode=true` in `config`.
 
 See `PRODUCT_SPEC.md` for the architecture, data model, ACL model, and scale/parallelism strategy.
+
+## Source modes (S3 shortcut or direct S3)
+
+The pipeline reads source files one of two ways, selected by the `source_mode` config key — the rest
+of the pipeline (change detection, ACLs, chunking, indexing) is identical either way:
+
+| `source_mode` | How files are read | Needs a shortcut? | Extra config |
+| --- | --- | --- | --- |
+| `s3_shortcut` (default) | Fabric OneLake S3 shortcut under `Files/` (`shortcut_root`) via `binaryFile` | Yes | `shortcut_root` |
+| `s3_direct` | Directly from S3 over REST + **AWS SigV4** (stdlib `hashlib`/`hmac`, no `boto3`, no `%pip`) | No | `s3_endpoint_url`, `s3_region`, `s3_bucket`, `s3_prefix`, `s3_addressing` (`path`\|`virtual`), `s3_verify_tls`, `s3_access_key_secret`, `s3_secret_key_secret` |
+
+`s3_direct` works with any S3-compatible endpoint (AWS, Cohesity, MinIO, …). File **identity is the
+same in both modes** — `file_path` is the *src_key* (object path relative to the bucket root) — so you
+can switch modes without changing ACLs or the change-detection scheme. Keys for `s3_direct` are read
+from Key Vault by the secret **names** above (never committed).
+
+**Index metadata:** each chunk also carries `folder_path` (filterable/facetable), `file_size`, and
+`last_modified` (plus reserved `author`/`last_modified_by`) for folder faceting and filtering.
 
 ## Config hygiene (endpoints are not committed)
 

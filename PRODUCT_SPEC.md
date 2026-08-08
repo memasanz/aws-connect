@@ -186,6 +186,14 @@ Created-if-missing with defaults by `nb_00_bootstrap` (or nb_01).
 | `embedding_dimensions` | `3072` | vector length |
 | `search_endpoint` | `https://x.search.windows.net` | AI Search endpoint |
 | `search_index_name` | `docs-rag` | target index |
+| `source_mode` | `s3_shortcut` | source reader: `s3_shortcut` (OneLake shortcut) or `s3_direct` (REST + SigV4) |
+| `shortcut_root` | `Files/s3_mmx_bucket` | shortcut path root (used by `s3_shortcut`) |
+| `s3_endpoint_url` | `https://s3.us-east-2.amazonaws.com` | S3-compatible endpoint (`s3_direct`) |
+| `s3_region` | `us-east-2` | SigV4 signing region (`s3_direct`) |
+| `s3_bucket` / `s3_prefix` | `mybucket` / `testset/` | bucket + key prefix (`s3_direct`) |
+| `s3_addressing` | `path` | `path` or `virtual` host addressing (`s3_direct`) |
+| `s3_verify_tls` | `true` | TLS verify (set `false` only for self-signed test endpoints) |
+| `s3_access_key_secret` / `s3_secret_key_secret` | secret names | Key Vault secret **names** for the S3 access/secret keys (`s3_direct`) |
 | `chunk_size` | `8000` | max chars per chunk (page-sized safety cap; pages under this = one chunk) |
 | `chunk_strategy_version` | `page-v1` | bump to force re-chunk |
 | `max_concurrency` | `8` | bounded parallelism vs throttling |
@@ -210,9 +218,14 @@ and `skipped_log` delta tables and seed `config` defaults (MERGE preserves opera
 Provides the `load_config(spark)` helper reused by the other notebooks and validates `acls.json`.
 
 ### 7.1 `nb_01_metadata_delta` (Pipeline 1)
-**Purpose:** scan the S3 shortcut, compute change-detection metadata, maintain `file_metadata`.
+**Purpose:** scan the source (S3 shortcut **or** direct S3, per `source_mode`), compute
+change-detection metadata, maintain `file_metadata`.
 - Create `config` + `file_metadata` if missing.
-- **Recursive, depth-agnostic** listing of the shortcut, distributed with Spark (no driver-side walk
+- **Source-mode switch:** `s3_shortcut` lists the OneLake shortcut via `binaryFile` +
+  `recursiveFileLookup`; `s3_direct` lists the bucket over REST + SigV4 (`s3_list_objects`). Both
+  produce the same schema keyed on `file_path` = **src_key** (object path relative to the bucket root),
+  so identity is mode-independent.
+- **Recursive, depth-agnostic** listing, distributed with Spark (no driver-side walk
   that collects all paths into memory); handle very large file counts by partitioning the tree.
 - Compute `change_hash` (+ optional `content_hash`).
 - **MERGE** into `file_metadata`: unseen → `new`; changed `change_hash` → `reingest`; unchanged →
@@ -223,8 +236,12 @@ Provides the `load_config(spark)` helper reused by the other notebooks and valid
 **Purpose:** define/create the Azure AI Search index (idempotent). Fields (at least):
 `chunk_id` (key), `file_path`, `file_name`, `file_extension`, `content` (searchable),
 `content_vector` (vector, `embedding_dimensions`), `page_number`, `chunk_index`,
-`allowed_groups` (collection, filterable), `embedding_model`, `chunk_strategy_version`, `indexed_utc`.
+`folder_path` (filterable/facetable), `file_size` (Int64), `last_modified` (DateTimeOffset),
+`author`, `last_modified_by` (reserved), `allowed_groups` (collection, filterable),
+`embedding_model`, `chunk_strategy_version`, `indexed_utc`.
 Vector config: HNSW; optional semantic ranker.
+> **Note:** `last_modified` must be a UTC-offset ISO-8601 value (`…+00:00`/`Z`); a naive timestamp is
+> rejected by Search (`Edm.DateTimeOffset`) and fails the whole upload batch — `nb_03` normalizes it.
 
 ### 7.3 `nb_03_ingest_to_index` (Pipeline 2)
 **Purpose:** ingest changed/new files + handle deletions.
