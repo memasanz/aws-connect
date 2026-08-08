@@ -306,6 +306,17 @@ content without re-ingesting. Optionally add it as a scheduled step if ACLs chan
 **Recommended orchestration:** one pipeline `pl_ingest` = [`nb_01_metadata_delta` → `nb_03_ingest_to_index`]
 on a daily schedule; `nb_00`/`nb_02` run manually at setup; `nb_04` run manually after ACL edits.
 
+> **⚠️ Do not run `nb_01` and `nb_03` concurrently — sequence them (`nb_01` → `nb_03`).** Both mutate
+> the same `file_metadata` Delta table. Because that table is small and unpartitioned, the two writers
+> rewrite the same underlying parquet file(s), so Delta's optimistic concurrency will fail whichever
+> job commits second with a `ConcurrentModificationException`. Even if a write slipped through, a
+> state transition could be lost — e.g. `nb_01` flips a file to `reingest` (content changed) or
+> `deleted` (removed from S3) while `nb_03` is mid-process, and `nb_03`'s later `set_status(complete)`
+> overwrites it until the next scan. Chaining them in a Data pipeline (nb_01 activity → on success →
+> nb_03) avoids both problems; the drain loop is fully restartable, so `nb_03` simply picks up whatever
+> `nb_01` just queued. If overlap is ever truly unavoidable, wrap the `file_metadata` writes in a
+> retry-on-`ConcurrentModificationException` — but sequencing is simpler and also prevents lost updates.
+
 ---
 
 ## 9. Change Detection
