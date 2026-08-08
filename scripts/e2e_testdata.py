@@ -14,9 +14,9 @@ Commands:
   cleanup  Delete only the generated (e2e/) keys. Leaves pre-existing testset/ objects intact.
 
 A manifest (manifest.json) is written to --out describing every generated file: key, rel_path (the
-src_key = object path relative to the bucket root, which nb_03 stamps as file_path in both source
+src_key = object path relative to the bucket root, which nb_pipeline_02 stamps as file_path in both source
 modes), folder, ext, pages, ACL groups, and whether it should be ingested (engineering/* is no_acl ->
-skipped). nb_07_e2e_verify uses it as ground truth.
+skipped). nb_ops_03_e2e_verify uses it as ground truth.
 
 Usage:
   python scripts/e2e_testdata.py seed   [--dry-run] [--out .e2e]
@@ -95,8 +95,8 @@ def canonical_manifest():
 
 
 def _item(key, folder, groups, ingested, ext, pages):
-    # rel_path is the src_key (object path relative to the bucket root) = the identity nb_03 stamps
-    # as file_path in both source modes. nb_07 matches on it directly.
+    # rel_path is the src_key (object path relative to the bucket root) = the identity nb_pipeline_02 stamps
+    # as file_path in both source modes. nb_ops_03 matches on it directly.
     return {
         "key": key,
         "rel_path": key,

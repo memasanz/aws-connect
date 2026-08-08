@@ -36,13 +36,13 @@ Amazon S3 bucket
 OneLake  Files/<shortcut>/...
       │
       │  ┌────────────────── Pipeline 1: Metadata Refresh ──────────────────┐
-      │  │  nb_01_metadata_delta                                            │
+      │  │  nb_pipeline_01_metadata_delta                                            │
       ▼  ▼                                                                  │
   Delta: file_metadata  (process_status state machine)                     │
       │  └────────────────────────────────────────────────────────────────┘
       │
       │  ┌────────────────── Pipeline 2: Index Ingestion ───────────────────┐
-      │  │  nb_03_ingest_to_index  (index built by nb_02_create_search_index)│
+      │  │  nb_pipeline_02_ingest_to_index  (index built by nb_setup_03_create_search_index)│
       ▼  ▼                                                                  │
   For each changed file:  ACL gate (acls.json + config.acl_bypass_enabled)  │
       │        ├─► Azure AI Document Intelligence  ──► text + page numbers   │
@@ -154,19 +154,19 @@ work; no anti-join required.
 
 | status | meaning | set by |
 | --- | --- | --- |
-| `new` | discovered, never ingested | nb_01 (insert) |
-| `changed` / `reingest` | `change_hash` differs from indexed version | nb_01 (merge) |
-| `pending` | claimed for the current ingestion run | nb_03 |
-| `ingesting` | actively processed (DI→chunk→embed→push) | nb_03 |
-| `complete` | successfully indexed; `change_hash` recorded | nb_03 |
-| `skipped` | not indexed (no ACL / unsupported / empty) | nb_03 |
-| `error` | failed; eligible for retry | nb_03 |
-| `dead_letter` | exceeded `max_retries`; manual attention | nb_03 |
-| `deleted` | absent from S3 (stale `last_seen_utc`); chunks purged | nb_01/nb_03 |
+| `new` | discovered, never ingested | nb_pipeline_01 (insert) |
+| `changed` / `reingest` | `change_hash` differs from indexed version | nb_pipeline_01 (merge) |
+| `pending` | claimed for the current ingestion run | nb_pipeline_02 |
+| `ingesting` | actively processed (DI→chunk→embed→push) | nb_pipeline_02 |
+| `complete` | successfully indexed; `change_hash` recorded | nb_pipeline_02 |
+| `skipped` | not indexed (no ACL / unsupported / empty) | nb_pipeline_02 |
+| `error` | failed; eligible for retry | nb_pipeline_02 |
+| `dead_letter` | exceeded `max_retries`; manual attention | nb_pipeline_02 |
+| `deleted` | absent from S3 (stale `last_seen_utc`); chunks purged | nb_pipeline_01/nb_pipeline_02 |
 
 **Transitions:** `new`/`changed`/`reingest`/`error` → `pending` → `ingesting` → `complete` | `skipped` | `error` | `dead_letter`.
-- If a `complete` file's `change_hash` later changes → nb_01 sets `reingest`.
-- If a previously-seen file is absent in the current scan → nb_01 sets `deleted` and queues chunk purge.
+- If a `complete` file's `change_hash` later changes → nb_pipeline_01 sets `reingest`.
+- If a previously-seen file is absent in the current scan → nb_pipeline_01 sets `deleted` and queues chunk purge.
 
 ---
 
@@ -174,7 +174,7 @@ work; no anti-join required.
 
 Single source of truth for runtime behavior. Read at the top of every notebook.
 Schema: `config(key STRING, value STRING, value_type STRING, updated_utc TIMESTAMP)`.
-Created-if-missing with defaults by `nb_00_bootstrap` (or nb_01).
+Created-if-missing with defaults by `nb_setup_01_bootstrap` (or nb_pipeline_01).
 
 | key | example | purpose |
 | --- | --- | --- |
@@ -212,12 +212,12 @@ Secrets are **never** stored here — only Key Vault references.
 
 Kept minimal, low-abstraction, PySpark-parallel where it helps.
 
-### 7.0 `nb_00_bootstrap` (run once / on config change)
+### 7.0 `nb_setup_01_bootstrap` (run once / on config change)
 **Purpose:** idempotently create the `config`, `file_metadata`, `ingestion_state`, `ingestion_log`,
 and `skipped_log` delta tables and seed `config` defaults (MERGE preserves operator overrides).
 Provides the `load_config(spark)` helper reused by the other notebooks and validates `acls.json`.
 
-### 7.1 `nb_01_metadata_delta` (Pipeline 1)
+### 7.1 `nb_pipeline_01_metadata_delta` (Pipeline 1)
 **Purpose:** scan the source (S3 shortcut **or** direct S3, per `source_mode`), compute
 change-detection metadata, maintain `file_metadata`.
 - Create `config` + `file_metadata` if missing.
@@ -232,7 +232,7 @@ change-detection metadata, maintain `file_metadata`.
   keep `complete` (refresh `last_seen_utc`).
 - **Deletion detection:** rows with `last_seen_utc` < run start → `deleted`.
 
-### 7.2 `nb_02_create_search_index` (run once / on schema change)
+### 7.2 `nb_setup_03_create_search_index` (run once / on schema change)
 **Purpose:** define/create the Azure AI Search index (idempotent). Fields (at least):
 `chunk_id` (key), `file_path`, `file_name`, `file_extension`, `content` (searchable),
 `content_vector` (vector, `embedding_dimensions`), `page_number`, `chunk_index`,
@@ -241,9 +241,9 @@ change-detection metadata, maintain `file_metadata`.
 `embedding_model`, `chunk_strategy_version`, `indexed_utc`.
 Vector config: HNSW; optional semantic ranker.
 > **Note:** `last_modified` must be a UTC-offset ISO-8601 value (`…+00:00`/`Z`); a naive timestamp is
-> rejected by Search (`Edm.DateTimeOffset`) and fails the whole upload batch — `nb_03` normalizes it.
+> rejected by Search (`Edm.DateTimeOffset`) and fails the whole upload batch — `nb_pipeline_02` normalizes it.
 
-### 7.3 `nb_03_ingest_to_index` (Pipeline 2)
+### 7.3 `nb_pipeline_02_ingest_to_index` (Pipeline 2)
 **Purpose:** ingest changed/new files + handle deletions.
 - Select rows `process_status IN ('new','changed','reingest','error')` under `max_retries`; process
   `deleted` rows first (purge chunks + `ingestion_state`).
@@ -272,9 +272,9 @@ Vector config: HNSW; optional semantic ranker.
   3. **Re-ingest cleanup:** delete existing chunks for `file_path` (deterministic `chunk_id`).
   4. **Robust read:** S3-shortcut bytes are read with a retry on the local mount, falling back to the
      Fabric fs API (copy-to-temp) since the mount does not always fault-in shortcut content. If every
-     method reports not-found — i.e. the file was **deleted from S3 after nb_01 listed it** — it is
+     method reports not-found — i.e. the file was **deleted from S3 after nb_pipeline_01 listed it** — it is
      marked **terminally** `skipped(source_missing)` (not a retryable `error`), so it never burns
-     retries or dead-letters; nb_01's deletion sweep formally tombstones it on its next run.
+     retries or dead-letters; nb_pipeline_01's deletion sweep formally tombstones it on its next run.
   5. Doc Intelligence → text + page numbers; empty → `skipped(empty_extract)`.
   6. **Chunk by page** (one chunk per page, **no overlap** — mirrors AI Search's default page
      chunking where `pageOverlapLength` is 0). A page longer than `chunk_size` chars is split into
@@ -289,7 +289,7 @@ Vector config: HNSW; optional semantic ranker.
   finishes** (incremental checkpointing — a crash never loses completed files), and Search uploads
   are batched (500 docs/request).
 
-### 7.4 `nb_04_acl_reconcile` (run after editing `acls.json`)
+### 7.4 `nb_pipeline_03_acl_reconcile` (run after editing `acls.json`)
 **Purpose:** keep security trimming in sync with ACL changes **without** re-running Doc Intelligence
 or embeddings. For each `complete` file whose freshly-resolved `acl_version` differs from the value
 in `ingestion_state`, merge-patch only the `allowed_groups` field on that file's existing Search
@@ -303,42 +303,42 @@ The solution runs as two scheduled Fabric Data Pipelines plus two on-demand setu
 notebooks. Each pipeline step is a **Notebook activity** bound to the `aws_connect_lh` lakehouse.
 
 ### Setup (run once, on-demand)
-1. `nb_00_bootstrap` — create tables + seed config.
-2. `nb_02_create_search_index` — create/upgrade the AI Search index. Re-run only on schema change.
+1. `nb_setup_01_bootstrap` — create tables + seed config.
+2. `nb_setup_03_create_search_index` — create/upgrade the AI Search index. Re-run only on schema change.
 
 ### Pipeline 1 — Metadata Refresh
-Runs `nb_01_metadata_delta`. **Schedule:** hourly or daily (via pipeline schedule trigger) + on-demand.
+Runs `nb_pipeline_01_metadata_delta`. **Schedule:** hourly or daily (via pipeline schedule trigger) + on-demand.
 Output: fresh `file_metadata` statuses (`new`/`reingest`/`deleted`). Cheap — safe to run frequently.
 
 ### Pipeline 2 — Index Ingestion
-Runs `nb_03_ingest_to_index` (index must exist via `nb_02`). **Schedule:** chained after Pipeline 1
+Runs `nb_pipeline_02_ingest_to_index` (index must exist via `nb_setup_03`). **Schedule:** chained after Pipeline 1
 (single pipeline with both activities in sequence) or on its own cadence. Idempotent + resumable
 (status-driven), so overlapping/failed runs are safe and pick up where they left off. For the
 initial load, set `backfill_mode=true` and let it run repeatedly until the queue drains.
 
 ### Maintenance — ACL Reconcile (on-demand)
-Run `nb_04_acl_reconcile` after editing `acls.json` to re-stamp `allowed_groups` on already-indexed
+Run `nb_pipeline_03_acl_reconcile` after editing `acls.json` to re-stamp `allowed_groups` on already-indexed
 content without re-ingesting. Optionally add it as a scheduled step if ACLs change frequently.
 
-**Recommended orchestration:** one pipeline `pl_ingest` = [`nb_01_metadata_delta` → `nb_03_ingest_to_index`]
-on a daily schedule; `nb_00`/`nb_02` run manually at setup; `nb_04` run manually after ACL edits.
+**Recommended orchestration:** one pipeline `pl_ingest` = [`nb_pipeline_01_metadata_delta` → `nb_pipeline_02_ingest_to_index`]
+on a daily schedule; `nb_setup_01`/`nb_setup_03` run manually at setup; `nb_pipeline_03` run manually after ACL edits.
 
-> **⚠️ Do not run `nb_01` and `nb_03` concurrently — sequence them (`nb_01` → `nb_03`).** Both mutate
+> **⚠️ Do not run `nb_pipeline_01` and `nb_pipeline_02` concurrently — sequence them (`nb_pipeline_01` → `nb_pipeline_02`).** Both mutate
 > the same `file_metadata` Delta table. Because that table is small and unpartitioned, the two writers
 > rewrite the same underlying parquet file(s), so Delta's optimistic concurrency will fail whichever
 > job commits second with a `ConcurrentModificationException`. Even if a write slipped through, a
-> state transition could be lost — e.g. `nb_01` flips a file to `reingest` (content changed) or
-> `deleted` (removed from S3) while `nb_03` is mid-process, and `nb_03`'s later `set_status(complete)`
-> overwrites it until the next scan. Chaining them in a Data pipeline (nb_01 activity → on success →
-> nb_03) avoids both problems; the drain loop is fully restartable, so `nb_03` simply picks up whatever
-> `nb_01` just queued. If overlap is ever truly unavoidable, wrap the `file_metadata` writes in a
+> state transition could be lost — e.g. `nb_pipeline_01` flips a file to `reingest` (content changed) or
+> `deleted` (removed from S3) while `nb_pipeline_02` is mid-process, and `nb_pipeline_02`'s later `set_status(complete)`
+> overwrites it until the next scan. Chaining them in a Data pipeline (nb_pipeline_01 activity → on success →
+> nb_pipeline_02) avoids both problems; the drain loop is fully restartable, so `nb_pipeline_02` simply picks up whatever
+> `nb_pipeline_01` just queued. If overlap is ever truly unavoidable, wrap the `file_metadata` writes in a
 > retry-on-`ConcurrentModificationException` — but sequencing is simpler and also prevents lost updates.
 
 ---
 
 ## 9. Change Detection
 A file is "changed" when its `change_hash` (size + `modified_datetime` + `etag`, optionally
-`content_hash`) differs from the indexed value. nb_01 sets `new`/`reingest`; Pipeline 2 works the
+`content_hash`) differs from the indexed value. nb_pipeline_01 sets `new`/`reingest`; Pipeline 2 works the
 status queue. Deletion is detected via stale `last_seen_utc`.
 
 ---
@@ -370,14 +370,14 @@ status queue. Deletion is detected via stale `last_seen_utc`.
   `max_retries`; on exceed they become `dead_letter` (+ `skipped_log`). A document stuck in
   `ingesting` past `ingesting_lease_minutes` is likewise reclaimed as a retry and dead-lettered once it
   exceeds the cap (see 7.3). A poison file therefore never blocks or infinitely re-runs the pipeline.
-- **Observability:** `nb_05_status` renders config, the queue breakdown by `process_status`,
+- **Observability:** `nb_ops_01_status` renders config, the queue breakdown by `process_status`,
   in-process vs. needs-processing counts, error reasons with the latest traceback, the dead-letter
   list, throughput, and a live Search doc count — the operational view for stop/restart batch runs.
 
 ---
 
 ## 12. Parallelism / Performance (deeply nested + high volume)
-- Spark distributes recursive listing + hashing (nb_01) and per-file ingestion (nb_03).
+- Spark distributes recursive listing + hashing (nb_pipeline_01) and per-file ingestion (nb_pipeline_02).
 - Bounded concurrency (`max_concurrency`) protects DI / AOAI / Search from throttling.
 - Batch Search uploads; deterministic `chunk_id` for clean replace.
 - Partition / Z-ORDER + periodic `OPTIMIZE` on `file_metadata` for fast status queries at scale.

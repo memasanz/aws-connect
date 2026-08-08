@@ -2,7 +2,7 @@
 s3_rest.py — dependency-light S3 access over the REST API with AWS Signature V4.
 
 Pure `requests` + stdlib (`hashlib`, `hmac`, `xml`, `urllib`) — **no boto3**. This is the reference
-implementation that is embedded (verbatim function bodies) into the Fabric notebooks nb_01/nb_03 so
+implementation that is embedded (verbatim function bodies) into the Fabric notebooks nb_pipeline_01/nb_pipeline_02 so
 the pipeline can read directly from any S3-compatible endpoint (AWS S3, Cohesity, MinIO, ...) without
 a `%pip install` in the Fabric job runtime.
 

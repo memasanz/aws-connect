@@ -5,13 +5,13 @@
     1. Upload config/acls.json  -> OneLake Files/acls/acls.json      (live ACLs for this run)
     2. seed ~100 docs to S3     (e2e_testdata.py seed) + manifest
     3. Upload manifest.json     -> OneLake Files/e2e/manifest.json
-    4. nb_06_reset_clean        (CONFIRM=true) — wipe Delta + Search index
-    5. nb_01_scan -> nb_03_ingest                                     (baseline ingest)
-    6. nb_07_e2e_verify PHASE=baseline
+    4. nb_ops_02_reset_clean        (CONFIRM=true) — wipe Delta + Search index
+    5. nb_pipeline_01_scan -> nb_pipeline_02_ingest                                     (baseline ingest)
+    6. nb_ops_03_e2e_verify PHASE=baseline
     7. mutate S3                (e2e_testdata.py mutate) + manifest_after
     8. Upload manifest_after.json -> OneLake Files/e2e/manifest_after.json
-    9. nb_01_scan -> nb_03_ingest                                     (incremental)
-   10. nb_07_e2e_verify PHASE=incremental
+    9. nb_pipeline_01_scan -> nb_pipeline_02_ingest                                     (incremental)
+   10. nb_ops_03_e2e_verify PHASE=incremental
    11. Read Files/_diag/e2e_result.json and print PASS/FAIL
 
   Repeatable: step 2 reconciles the generated corpus to a canonical state each run, and step 4 wipes
@@ -74,14 +74,14 @@ if (-not $SkipSeed) {
 Upload-OneLake (Join-Path $repo "$OutDir\manifest.json") 'e2e/manifest.json'
 
 # 4. Reset
-Run-Nb (Join-Path $nb 'nb_06_reset_clean.ipynb') 'nb_06_reset_clean' @{ CONFIRM = $true }
+Run-Nb (Join-Path $nb 'nb_ops_02_reset_clean.ipynb') 'nb_ops_02_reset_clean' @{ CONFIRM = $true }
 
 # 5. Baseline ingest
-Run-Nb (Join-Path $nb 'nb_01_metadata_delta.ipynb')   'nb_01_metadata_delta'   @{}
-Run-Nb (Join-Path $nb 'nb_03_ingest_to_index.ipynb') 'nb_03_ingest_to_index' @{}
+Run-Nb (Join-Path $nb 'nb_pipeline_01_metadata_delta.ipynb')   'nb_pipeline_01_metadata_delta'   @{}
+Run-Nb (Join-Path $nb 'nb_pipeline_02_ingest_to_index.ipynb') 'nb_pipeline_02_ingest_to_index' @{}
 
 # 6. Verify baseline
-Run-Nb (Join-Path $nb 'nb_07_e2e_verify.ipynb') 'nb_07_e2e_verify' @{ PHASE = 'baseline' }
+Run-Nb (Join-Path $nb 'nb_ops_03_e2e_verify.ipynb') 'nb_ops_03_e2e_verify' @{ PHASE = 'baseline' }
 
 # 7-8. Mutate + manifest_after
 Write-Host '== mutate S3 corpus ==' -ForegroundColor Cyan
@@ -90,11 +90,11 @@ if ($LASTEXITCODE -ne 0) { throw 'mutate failed' }
 Upload-OneLake (Join-Path $repo "$OutDir\manifest_after.json") 'e2e/manifest_after.json'
 
 # 9. Incremental ingest
-Run-Nb (Join-Path $nb 'nb_01_metadata_delta.ipynb')   'nb_01_metadata_delta'   @{}
-Run-Nb (Join-Path $nb 'nb_03_ingest_to_index.ipynb') 'nb_03_ingest_to_index' @{}
+Run-Nb (Join-Path $nb 'nb_pipeline_01_metadata_delta.ipynb')   'nb_pipeline_01_metadata_delta'   @{}
+Run-Nb (Join-Path $nb 'nb_pipeline_02_ingest_to_index.ipynb') 'nb_pipeline_02_ingest_to_index' @{}
 
 # 10. Verify incremental
-Run-Nb (Join-Path $nb 'nb_07_e2e_verify.ipynb') 'nb_07_e2e_verify' @{ PHASE = 'incremental' }
+Run-Nb (Join-Path $nb 'nb_ops_03_e2e_verify.ipynb') 'nb_ops_03_e2e_verify' @{ PHASE = 'incremental' }
 
 # 11. Report
 Write-Host '== E2E result ==' -ForegroundColor Green

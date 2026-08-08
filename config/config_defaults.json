@@ -1,5 +1,5 @@
 {
-  "description": "Default values for the OneLake `config` delta table. Loaded by nb_00_bootstrap. Auth is hybrid: Document Intelligence + Azure OpenAI are keyless Entra (disableLocalAuth policy); Azure AI Search uses an admin key read from Key Vault (kv_name/search_key_secret). No secret values are stored here. See PRODUCT_SPEC.md sections 6 and 14.",
+  "description": "Default values for the OneLake `config` delta table. Loaded by nb_setup_01_bootstrap. Auth is hybrid: Document Intelligence + Azure OpenAI are keyless Entra (disableLocalAuth policy); Azure AI Search uses an admin key read from Key Vault (kv_name/search_key_secret). No secret values are stored here. See PRODUCT_SPEC.md sections 6 and 14.",
   "config": {
     "acl_bypass_enabled": "false",
     "acls_file_path": "Files/acls/acls.json",

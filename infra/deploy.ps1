@@ -42,7 +42,7 @@ $out = az deployment group create `
 
 Write-Host ""
 Write-Host "================ DEPLOYMENT COMPLETE ================"
-Write-Host "Set these in the Fabric `config` table (nb_00 seeds defaults you then override):"
+Write-Host "Set these in the Fabric `config` table (nb_setup_01 seeds defaults you then override):"
 Write-Host ""
 Write-Host ("  kv_name                     = {0}" -f $out.kvName.value)
 Write-Host ("  doc_intelligence_endpoint   = {0}" -f $out.diEndpoint.value)

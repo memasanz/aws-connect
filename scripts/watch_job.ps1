@@ -6,7 +6,7 @@
   job is still running regardless of whether any earlier poller is still watching.
 
   Usage:
-    # show the latest few job instances for nb_03 and their status/timings
+    # show the latest few job instances for nb_pipeline_02 and their status/timings
     .\scripts\watch_job.ps1
 
     # follow the latest running job until it reaches a terminal state (Ctrl+C to stop watching;
@@ -18,7 +18,7 @@
 #>
 param(
   [string]$Workspace = 'ef1eda73-0a00-4ad0-80b2-5eccf9a98a5f',
-  [string]$Item = '16537330-dfda-4f35-a0b2-b90231c9ea4b',  # nb_03_ingest_to_index
+  [string]$Item = '16537330-dfda-4f35-a0b2-b90231c9ea4b',  # nb_pipeline_02_ingest_to_index
   [switch]$Follow,
   [int]$IntervalSec = 15
 )
@@ -64,7 +64,7 @@ while ($true) {
     Write-Host "`nJob reached terminal state: $($latest.status)"
     if ($latest.failureReason) { ($latest.failureReason | ConvertTo-Json -Depth 6) | Write-Host }
     Write-Host "startedUtc=$($latest.startTimeUtc)  endedUtc=$($latest.endTimeUtc)"
-    Write-Host "For in-job progress (processed/total, throughput, ETA) run nb_05_status -> section 1b (run_progress)."
+    Write-Host "For in-job progress (processed/total, throughput, ETA) run nb_ops_01_status -> section 1b (run_progress)."
     break
   }
   Start-Sleep -Seconds $IntervalSec

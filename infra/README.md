@@ -55,6 +55,6 @@ data-plane roles above and Key Vault `get/list/set`), and prints the values to s
 
 ## Feeding config into Fabric
 
-After deploy, set these in the `config` delta table (overriding `nb_00` seeds):
+After deploy, set these in the `config` delta table (overriding `nb_setup_01` seeds):
 `kv_name`, `doc_intelligence_endpoint`, `aoai_endpoint`, `aoai_embedding_deployment`,
 `search_endpoint`.

@@ -1,6 +1,6 @@
 <#
   Helper: import a local .ipynb into Fabric (bound to aws_connect_lh), run it, poll to completion.
-  Usage:  .\scripts\run_fabric_nb.ps1 -Path notebooks\nb_00_bootstrap.ipynb -DisplayName nb_00_bootstrap
+  Usage:  .\scripts\run_fabric_nb.ps1 -Path notebooks\nb_setup_01_bootstrap.ipynb -DisplayName nb_setup_01_bootstrap
   Prints the final job status. Reuses an existing item of the same displayName if present.
 #>
 param(
