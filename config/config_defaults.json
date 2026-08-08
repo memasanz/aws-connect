@@ -1,5 +1,5 @@
 {
-  "description": "Default values for the OneLake `config` delta table. Loaded by nb_00_bootstrap. Service auth is keyless (Entra ID) - no keys stored. See PRODUCT_SPEC.md sections 6 and 14.",
+  "description": "Default values for the OneLake `config` delta table. Loaded by nb_00_bootstrap. Auth is hybrid: Document Intelligence + Azure OpenAI are keyless Entra (disableLocalAuth policy); Azure AI Search uses an admin key read from Key Vault (kv_name/search_key_secret). No secret values are stored here. See PRODUCT_SPEC.md sections 6 and 14.",
   "config": {
     "acl_bypass_enabled": "false",
     "acls_file_path": "Files/acls/acls.json",
@@ -14,6 +14,7 @@
 
     "search_endpoint": "https://<your-search>.search.windows.net",
     "search_index_name": "docs-rag",
+    "search_key_secret": "search-admin-key",
 
     "chunk_size": "8000",
     "chunk_strategy_version": "page-v1",
@@ -21,9 +22,11 @@
     "max_concurrency": "8",
     "max_retries": "3",
     "ingesting_lease_minutes": "120",
+    "batch_size": "100",
+    "max_batches_per_run": "0",
+    "run_time_budget_min": "0",
     "supported_extensions": "pdf,docx,pptx,xlsx,html,htm,txt,md",
     "backfill_mode": "false",
-    "batch_size": "200",
     "backfill_batch_size": "500",
 
     "kv_name": "<your-keyvault-name>"

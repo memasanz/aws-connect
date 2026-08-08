@@ -60,20 +60,45 @@ def main():
     os.makedirs(STAGE)
     j = lambda *p: os.path.join(STAGE, *p)
 
-    # finance/ (has ACL)
-    multipage_pdf(j("finance", "reports", "2024", "q1", "q1-earnings.pdf"), "Q1 2024 Earnings", 5)
-    multipage_pdf(j("finance", "reports", "2024", "q2", "q2-earnings.pdf"), "Q2 2024 Earnings", 3)
-    make_txt(j("finance", "reports", "2024", "q1", "analyst-notes.txt"), "Analyst Notes Q1", 12)
-    make_docx(j("finance", "policies", "expense-policy.docx"), "Expense Reimbursement Policy", 6)
+    quarters = ["q1", "q2", "q3", "q4"]
+    years = ["2023", "2024"]
 
-    # hr/ (has ACL)
-    multipage_pdf(j("hr", "handbook", "employee-handbook.pdf"), "Employee Handbook", 8)
-    multipage_pdf(j("hr", "onboarding", "welcome-guide.pdf"), "New Hire Welcome Guide", 2)
+    # finance/ (has ACL) — nested reports by year/quarter + policies
+    for yr in years:
+        for q in quarters:
+            multipage_pdf(j("finance", "reports", yr, q, f"{q}-{yr}-earnings.pdf"),
+                          f"{q.upper()} {yr} Earnings", 3)
+            make_txt(j("finance", "reports", yr, q, f"{q}-{yr}-analyst-notes.txt"),
+                     f"Analyst Notes {q.upper()} {yr}", 10)
+    for name in ["expense-policy", "travel-policy", "procurement-policy",
+                 "audit-controls", "revenue-recognition"]:
+        make_docx(j("finance", "policies", f"{name}.docx"),
+                  name.replace("-", " ").title(), 5)
+    for i in range(1, 31):
+        multipage_pdf(j("finance", "invoices", "2024", f"invoice-{i:04d}.pdf"),
+                      f"Invoice {i:04d}", 2)
+
+    # hr/ (has ACL) — handbook, onboarding, benefits, deeply nested reviews
+    multipage_pdf(j("hr", "handbook", "employee-handbook.pdf"), "Employee Handbook", 6)
     make_zip_unsupported(j("hr", "handbook", "handbook-archive.zip"))  # unsupported -> skip
+    for i in range(1, 11):
+        multipage_pdf(j("hr", "onboarding", f"welcome-guide-{i:02d}.pdf"),
+                      f"New Hire Welcome Guide {i:02d}", 2)
+    for name in ["health-plan", "dental-plan", "retirement-401k", "pto-policy",
+                 "parental-leave", "wellness-program"]:
+        make_docx(j("hr", "benefits", f"{name}.docx"),
+                  name.replace("-", " ").title(), 4)
+    for dept in ["sales", "support", "operations"]:
+        for i in range(1, 7):
+            make_txt(j("hr", "reviews", "2024", dept, f"review-{dept}-{i:02d}.txt"),
+                     f"Performance Review {dept} {i:02d}", 8)
 
     # engineering/ (NO ACL entry -> no_acl skip unless bypass), deeply nested
-    multipage_pdf(j("engineering", "specs", "platform", "v2", "internal", "draft",
-                    "architecture-spec.pdf"), "Platform Architecture Spec", 4)
+    for area in ["platform", "data", "security"]:
+        for i in range(1, 5):
+            multipage_pdf(j("engineering", "specs", area, "v2", "internal", "draft",
+                            f"{area}-spec-{i:02d}.pdf"),
+                          f"{area.title()} Spec {i:02d}", 3)
 
     print("\nSTAGE:", STAGE)
     total = sum(len(fs) for _, _, fs in os.walk(STAGE))

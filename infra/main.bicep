@@ -31,16 +31,21 @@ param embeddingCapacity int = 50
 @allowed(['basic', 'standard'])
 param searchSku string = 'basic'
 
+@description('Key Vault secret name that will hold the AI Search admin key.')
+param searchKeySecretName string = 'search-admin-key'
+
+@description('Full resourceId of the policy assignment enforcing KeyVault_PublicNetwork_Modify (Modify effect). A Waiver exemption is created for this vault so Fabric can read the secret. Leave empty to skip (tenants without that policy).')
+param kvPublicNetworkModifyAssignmentId string = ''
+
 var suffix = uniqueString(resourceGroup().id)
 var kvName = toLower('kv-${baseName}-${substring(suffix, 0, 6)}')
 var diName = toLower('di-${baseName}-${substring(suffix, 0, 6)}')
 var aoaiName = toLower('aoai-${baseName}-${substring(suffix, 0, 6)}')
 var searchName = toLower('srch-${baseName}-${substring(suffix, 0, 6)}')
 
-// Built-in role definition IDs (data-plane).
+// Built-in role definition IDs (data-plane, keyless services).
 var roleCognitiveServicesUser = 'a97b65f3-24c7-4388-baec-2e87618e0e56'
 var roleOpenAiUser = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
-var roleSearchIndexDataContributor = '8ebe5a00-799e-43f5-93ac-243d3dce84a7'
 
 // --- Document Intelligence (Cognitive Services, kind FormRecognizer) ---
 resource di 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
@@ -100,7 +105,11 @@ resource search 'Microsoft.Search/searchServices@2024-06-01-preview' = {
   }
 }
 
-// --- Key Vault (retained for any non-service secrets; no service keys under keyless auth) ---
+// --- Key Vault (holds the AI Search admin key; DI/AOAI remain keyless) ---
+// NOTE: This tenant applies a Modify policy (KeyVault_PublicNetwork_Modify) that forces
+// publicNetworkAccess=Disabled. Fabric has no private link to this vault, so a policy EXEMPTION
+// (below) is required for `notebookutils.credentials.getSecret` to work. With the exemption in
+// place we can keep publicNetworkAccess=Enabled here.
 resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: kvName
   location: location
@@ -109,6 +118,11 @@ resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
     tenantId: subscription().tenantId
     enableSoftDelete: true
     enabledForTemplateDeployment: true
+    publicNetworkAccess: 'Enabled'
+    networkAcls: {
+      defaultAction: 'Allow'
+      bypass: 'AzureServices'
+    }
     accessPolicies: [
       {
         tenantId: subscription().tenantId
@@ -121,7 +135,33 @@ resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-// --- Data-plane role assignments for the notebook-running identity (keyless auth) ---
+// Store the AI Search admin key as a Key Vault secret. The ARM/KeyVault RP write path works even
+// while the vault's data plane is network-restricted, so this succeeds regardless of the policy.
+resource searchKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: kv
+  name: searchKeySecretName
+  properties: {
+    value: search.listAdminKeys().primaryKey
+  }
+}
+
+// Policy exemption so the Modify policy stops forcing publicNetworkAccess=Disabled on this vault,
+// allowing Fabric to read the secret. Set kvPublicNetworkModifyAssignmentId='' to skip (e.g. in a
+// tenant without that policy).
+resource kvPolicyExemption 'Microsoft.Authorization/policyExemptions@2022-07-01-preview' = if (!empty(kvPublicNetworkModifyAssignmentId)) {
+  name: 'kv-${baseName}-public-access'
+  scope: kv
+  properties: {
+    policyAssignmentId: kvPublicNetworkModifyAssignmentId
+    exemptionCategory: 'Waiver'
+    policyDefinitionReferenceIds: [
+      'keyvaultpublicnetworkmodify'
+    ]
+    description: 'Allow public network access so Fabric notebooks can read the AI Search key secret.'
+  }
+}
+
+// --- Data-plane role assignments for the notebook-running identity (keyless DI + AOAI) ---
 resource diRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(di.id, adminObjectId, roleCognitiveServicesUser)
   scope: di
@@ -140,17 +180,9 @@ resource aoaiRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource searchRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(search.id, adminObjectId, roleSearchIndexDataContributor)
-  scope: search
-  properties: {
-    principalId: adminObjectId
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleSearchIndexDataContributor)
-  }
-}
-
 // --- Outputs (feed these into the Fabric `config` table) ---
 output kvName string = kv.name
+output searchKeySecretName string = searchKeySecretName
 output diEndpoint string = di.properties.endpoint
 output aoaiEndpoint string = aoai.properties.endpoint
 output embeddingDeployment string = embedding.name

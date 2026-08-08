@@ -231,23 +231,37 @@ Vector config: HNSW; optional semantic ranker.
 - Select rows `process_status IN ('new','changed','reingest','error')` under `max_retries`; process
   `deleted` rows first (purge chunks + `ingestion_state`).
 - **Claim:** MERGE-guarded transition `→ pending → ingesting` (prevents double-processing).
-  Stale `ingesting` rows from a crashed/timed-out prior run (older than `ingesting_lease_minutes`)
-  are reclaimed at run start so no work is stranded.
-- **Batch/backfill pacing:** claim at most `batch_size` (or `backfill_batch_size` when
-  `backfill_mode=true`) files per run, ordered deterministically — status-driven so the corpus
-  ingests incrementally and resumably.
+- **Stuck-file reclaim (visibility timeout):** at run start, any file left in `ingesting` longer than
+  `ingesting_lease_minutes` (a crashed/cancelled run, or a poison file that hangs every attempt) is
+  reclaimed. **Each reclaim counts as a retry** (`retry_count += 1`): under `max_retries` it returns
+  to the queue as `reingest` (`status_reason='recovered_stale_ingesting'`); at/over the cap it is
+  **dead-lettered** (`status_reason='stuck_ingesting_exceeded_retries'`) so one stuck document can
+  never loop forever. This is the guarantee that makes the pipeline safe to **stop and restart**:
+  a killed run strands no work permanently, and per-file time limits (DI poll deadline + HTTP
+  timeouts, below) bound how long any single document can occupy a worker.
+- **Batched drain loop:** one invocation processes the queue in **batches of `batch_size`** (default
+  100) until drained, or until `max_batches_per_run` / `run_time_budget_min` is reached (both `0` =
+  unbounded). Each iteration **claims one batch and marks only those files `ingesting`** (no bulk
+  pre-claim), processes them, commits status per file, updates `run_progress`, then re-checks for more.
+  So `process_status` always reflects what is *actually* being processed, and a stopped run leaves at
+  most one batch in flight. The claim is **scale-safe and self-excluding**: it selects only rows last
+  updated **before this run started** (`RUN_START_TS`), so a file that errors mid-run retries on the
+  *next* invocation rather than hot-looping within this one. (`backfill_mode=true` uses the larger
+  `backfill_batch_size` per batch.)
 - **Deletion:** for `deleted`, delete all chunks for `file_path` from Search + remove `ingestion_state`.
 - **Full ingest** (new/changed):
   1. Resolve folder → groups via `acls.json`; none & `acl_bypass_enabled=false` → `skipped(no_acl)`.
   2. Extension in `supported_extensions`? else → `skipped(doc_intel_unsupported)`.
   3. **Re-ingest cleanup:** delete existing chunks for `file_path` (deterministic `chunk_id`).
-  4. Doc Intelligence → text + page numbers; empty → `skipped(empty_extract)`.
-  5. **Chunk by page** (one chunk per page, **no overlap** — mirrors AI Search's default page
+  4. **Robust read:** S3-shortcut bytes are read with a retry on the local mount, falling back to the
+     Fabric fs API (copy-to-temp) since the mount does not always fault-in shortcut content.
+  5. Doc Intelligence → text + page numbers; empty → `skipped(empty_extract)`.
+  6. **Chunk by page** (one chunk per page, **no overlap** — mirrors AI Search's default page
      chunking where `pageOverlapLength` is 0). A page longer than `chunk_size` chars is split into
      multiple non-overlapping chunks that keep the same page number (safety cap for embedding limits).
-  6. Embed via Azure OpenAI.
-  7. Push chunks (+ `allowed_groups`, `embedding_model`, `chunk_strategy_version`) to Search.
-  8. Update `ingestion_state`, write `ingestion_log`, set `complete`.
+  7. Embed via Azure OpenAI.
+  8. Push chunks (+ `allowed_groups`, `embedding_model`, `chunk_strategy_version`) to Search.
+  9. Update `ingestion_state`, write `ingestion_log`, set `complete`.
 - **Errors:** increment `retry_count`; ≥ `max_retries` → `dead_letter` + `skipped_log`; else `error`.
 - **Parallelism & durability:** two-phase — network-heavy work (DI/embed/Search) fans out in a
   bounded `ThreadPoolExecutor(max_concurrency)`; Delta status/state/log writes are applied serially
@@ -309,9 +323,25 @@ status queue. Deletion is detected via stale `last_seen_utc`.
 ---
 
 ## 11. Error Handling & Logging
-- `skipped_log` captures every non-ingest with a reason.
+- `skipped_log` captures every non-ingest with a reason and the **full exception traceback** in
+  `detail`; the concise `ExcType: message` also lands in `file_metadata.status_reason`. Error reasons
+  are **stage-tagged** (`extract_error` / `embed_error` / `search_error`) so failures are attributable
+  to the step that raised them rather than a generic bucket.
 - `ingestion_log` captures every success (chunks, pages, duration, models).
-- Retries with backoff up to `max_retries`; poison files land in `dead_letter` and never block a run.
+- **Resilient HTTP:** every external call (DI, AOAI, Search) goes through one helper that enforces
+  connect/read **timeouts** (a stalled socket can never hang the run) and **retries** `429`/`5xx` with
+  exponential backoff honoring `Retry-After` — this absorbs Azure OpenAI / Document Intelligence rate
+  limits at scale.
+- **Per-file time bounds:** Document Intelligence polling is capped by a hard deadline
+  (`DI_POLL_DEADLINE_S`, default 180s) and every HTTP call has a read timeout, so a single document
+  can occupy a worker for only a bounded time before it errors out and frees the slot.
+- **Retry & dead-letter:** `error` rows increment `retry_count` and are retried on the next run up to
+  `max_retries`; on exceed they become `dead_letter` (+ `skipped_log`). A document stuck in
+  `ingesting` past `ingesting_lease_minutes` is likewise reclaimed as a retry and dead-lettered once it
+  exceeds the cap (see 7.3). A poison file therefore never blocks or infinitely re-runs the pipeline.
+- **Observability:** `nb_05_status` renders config, the queue breakdown by `process_status`,
+  in-process vs. needs-processing counts, error reasons with the latest traceback, the dead-letter
+  list, throughput, and a live Search doc count — the operational view for stop/restart batch runs.
 
 ---
 

@@ -15,9 +15,31 @@ The agent commits + pushes to `main` at the end of each sprint so progress is vi
 | S5 | ACL drift + delete purge + bounded parallelism | ✅ done |
 | S6 | Pipelines + docs | ✅ done |
 | S7 | End-to-end test: fake docs → S3 → deploy Azure → run in Fabric | 🏗️ in progress |
+| S8 | Batch durability hardening: stuck-file reclaim-as-retry, stop/restart, visibility | 🏗️ in progress |
 
 **Core build complete** (S0–S6). **Sprint 7** adds a live end-to-end test with real data + deployed
-Azure resources.
+Azure resources. **Sprint 8** hardens the pipeline for repeated stop/restart batch runs with strong
+visibility and self-healing of stuck documents.
+
+### Sprint 8 plan — batch durability & visibility
+Goal: the pipeline must handle documents in **batches**, be safe to **stop and restart** at any time,
+never get permanently stuck on a single document, and give **live visibility** into a running job.
+
+| # | Task | Status |
+| --- | --- | --- |
+| 8.1 | **Batched drain loop** — one invocation claims `batch_size` (100) files at a time, processes them, checkpoints, then asks "any more?" and repeats until drained or `max_batches_per_run`/`run_time_budget_min` cap hit | ✅ done |
+| 8.2 | **Honest `ingesting` state** — mark **only** the in-flight batch `ingesting` (no bulk pre-claim); status always reflects what is actually being processed | ✅ done |
+| 8.3 | **Scale-safe self-excluding claim** — claim only rows untouched since `RUN_START_TS`, so a file that errors mid-run retries on the *next* invocation, never hot-loops | ✅ done |
+| 8.4 | **Stuck-file reclaim as a retry** — `ingesting` past `ingesting_lease_minutes` → `retry_count+=1`; under cap → `reingest`, at/over cap → `dead_letter` (poison files can't loop forever) | ✅ done |
+| 8.5 | **Per-file time bounds** — DI poll deadline (180s) + HTTP read timeouts bound how long one doc can hold a worker | ✅ done |
+| 8.6 | **Robust S3-shortcut reads** — local mount can miss shortcut bytes (`FileNotFoundError`); retry local read then fall back to the Fabric fs API copy-to-temp | ✅ done |
+| 8.7 | **Stage-tagged errors + full tracebacks** — `extract_error`/`embed_error`/`search_error` reason + full stack in `skipped_log.detail` | ✅ done |
+| 8.8 | **Live progress in Delta** — `run_progress` table (one row/run, throttled upsert, MVCC = no locks): phase, processed/total, throughput, ETA, last file | ✅ done |
+| 8.9 | **Job monitor** — `scripts/watch_job.ps1` reads real server-side Fabric job status on demand (a stopped poller ≠ a stopped job) | ✅ done |
+| 8.10 | **nb_05 live panel** — section 1b renders `run_progress` while a run is in flight | ✅ done |
+| 8.11 | **Clean-index E2E test** — empty index, reset queue, run drain loop, verify visibility + counts; then delete + update scenarios | 🏗️ in progress |
+
+Config added: `batch_size=100`, `max_batches_per_run=0` (0=drain), `run_time_budget_min=0` (0=no cap).
 
 ### Sprint 7 plan — end-to-end test
 Goal: prove the whole pipeline on real data and deployed services.
@@ -43,6 +65,26 @@ Goal: prove the whole pipeline on real data and deployed services.
   - Note: bucket region is **us-east-2** (initial us-east-1 URL returned a 301).
 
 ## Changelog
+
+### Sprint 8 — batch durability, honest state & live visibility
+- **Batched drain loop** in `nb_03`: one invocation now claims `batch_size` (100) files at a time,
+  processes + checkpoints them, then re-checks for more, draining the queue in bounded chunks with
+  optional `max_batches_per_run` / `run_time_budget_min` caps. Replaces the single bulk pre-claim.
+- **Honest `ingesting` state:** only the in-flight batch is marked `ingesting` (bug fix — the old bulk
+  pre-claim left files `ingesting` that were never processed when a run ended). Status now reflects
+  what is actually being worked.
+- **Scale-safe self-excluding claim:** claims only rows untouched since `RUN_START_TS`, so a file that
+  errors mid-run retries on the *next* invocation instead of hot-looping.
+- **Stuck-file reclaim as a retry:** `ingesting` past `ingesting_lease_minutes` → `retry_count+=1`;
+  under cap → `reingest`, at/over cap → `dead_letter` (poison files can't loop forever).
+- **Robust S3-shortcut reads:** `read_file_bytes()` retries the local mount then falls back to the
+  Fabric fs API (copy-to-temp) — fixes intermittent `FileNotFoundError` on shortcut content.
+- **Live progress in Delta:** new `run_progress` table (one row/run, throttled MVCC upsert = no file
+  locks) with phase, processed/total, throughput, ETA, last file; surfaced in `nb_05` section 1b.
+- **Job monitor:** `scripts/watch_job.ps1` reads the real server-side Fabric job status on demand
+  (a stopped client poller is not a stopped job).
+- Config: `batch_size` 200→100, added `max_batches_per_run=0`, `run_time_budget_min=0`. Updated
+  `nb_00_bootstrap`, `config_defaults.json`, `PRODUCT_SPEC.md` (§7.3, §11).
 
 ### Post-build refinements — chunking + durability
 - **Chunk by page, no overlap** (per @memasanz): `nb_03` now emits one chunk per page (splitting only
