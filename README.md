@@ -102,6 +102,41 @@ and **only-changes-reprocessed** on the incremental pass. Results are written to
 `Files/_diag/e2e_result.json`. The seed reconciles the corpus to a canonical state each run, so it is
 fully repeatable. Manage the corpus directly with `scripts/e2e_testdata.py {seed|mutate|cleanup}`.
 
+## Concurrency model & scaling (design decision)
+
+**`nb_03` ingests on the Spark *driver* using a bounded `ThreadPoolExecutor` (`max_concurrency`,
+default 8) — it does not distribute per-file work across Spark executors.** This is a deliberate
+choice, not an oversight.
+
+**Why driver-side, not `foreachPartition`/`mapPartitions`:**
+- The per-file cost is almost entirely **external-service network I/O** (Document Intelligence
+  extract, Azure OpenAI embeddings, AI Search upload) — not driver CPU. The binding constraint is
+  those services' **per-account rate limits**, not the number of machines.
+- The driver pool acts as a single, centralized **rate controller**: bounded concurrency +
+  round-robin **endpoint pools** + `throttle_log`. Distributing to N executors would multiply request
+  rate by N and hit **429s** N× faster unless a *global* rate budget were reintroduced.
+- All durable coordination lives in one place: Delta `MERGE` for claim/checkpoint/retry/lease, the
+  self-excluding claim, stuck-file reclaim, and the single throttled `run_progress` row. Writing
+  pipeline state **from executors is a Delta anti-pattern** (commit conflicts, small-file storms).
+- Secrets/tokens (`getSecret`, Entra tokens) are acquired on the driver; distributing would require
+  broadcasting secrets or fragile per-executor token minting.
+
+**How to scale first (cheapest → most involved):**
+1. **Measure** `throttle_log` + `run_progress.rate_per_min`. If you're already throttling at
+   `max_concurrency=8`, more machines won't help — **raise service quotas / add DI+AOAI endpoints**.
+2. **Turn the dials:** raise `max_concurrency` (I/O-bound threads are cheap — 32–64 is fine), add
+   endpoints to the pool, use a larger driver node. The **batched drain loop** already scales file
+   *count* safely (bounded `batch_size` per run, resumable across runs).
+3. **Only if the driver is genuinely saturated *and* the external APIs have headroom**, refactor to a
+   **structured `mapPartitions`**: the driver claims a batch up-front and distributes it; **executors
+   do only the stateless work** (read → extract → chunk → embed → push to Search) and return
+   lightweight result rows; **the driver performs every Delta write**. Enforce a global budget so
+   `partitions × per-partition-concurrency ≤ quota`. Tracked as a Sprint 13 option.
+
+In short: `foreachPartition` = "use the whole cluster instead of just the driver node," but it only
+pays off once **service quotas — not the driver — are the ceiling**, and it trades simplicity for a
+real rewrite of the state/rate-limit/secret handling.
+
 ## Required permissions
 
 The notebooks use **keyless (Entra ID) authentication** — this subscription enforces
