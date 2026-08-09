@@ -16,8 +16,8 @@ so the design is depth-agnostic, incremental, and resumable.
 - Incrementally detect new / changed / deleted files in the S3 source without full reprocessing.
 - Extract content with **Azure AI Document Intelligence**, chunk it (with page numbers),
   vectorize with **Azure OpenAI embeddings**, and push to **Azure AI Search**.
-- Enforce **folder-based ACLs**: gate ingestion and stamp `allowed_groups` on each chunk for
-  query-time security trimming.
+- Enforce **folder-based ACLs**: gate ingestion and stamp `allowed_groups` (plus optional direct
+  per-user `allowed_users`) on each chunk for query-time security trimming.
 - Provide clear operational state (per-file status), logging, and idempotent reruns.
 
 ### Non-Goals
@@ -47,11 +47,11 @@ OneLake  Files/<shortcut>/...
   For each changed file:  ACL gate (acls.json + config.acl_bypass_enabled)  │
       │        ├─► Azure AI Document Intelligence  ──► text + page numbers   │
       │        ├─► chunk (size/overlap from config) ──► Azure OpenAI embed   │
-      │        └─► push chunks (+ allowed_groups) ──► Azure AI Search        │
+      │        └─► push chunks (+ allowed_groups/allowed_users) ─► Azure AI Search │
       │  Delta: ingestion_state / ingestion_log / skipped_log               │
       │  └────────────────────────────────────────────────────────────────┘
       ▼
-Azure AI Search index (vector + content + page_number + file_path + allowed_groups + metadata)
+Azure AI Search index (vector + content + page_number + file_path + allowed_groups/allowed_users + metadata)
 ```
 
 ### Components
@@ -204,7 +204,7 @@ Created-if-missing with defaults by `nb_setup_01_bootstrap` (or nb_pipeline_01).
 | `max_concurrency` | `8` | bounded parallelism vs throttling |
 | `max_retries` | `3` | before `dead_letter` |
 | `ingesting_lease_minutes` | `120` | reclaim `ingesting` rows stranded by a crashed run |
-| `supported_extensions` | `pdf,docx,pptx,xlsx,html,txt` | pre-filter before DI |
+| `supported_extensions` | `pdf,docx,pptx,xlsx,html,htm,txt,md` | pre-filter before DI |
 | `backfill_mode` | `false` | larger batches / pacing for first load |
 | `batch_size` / `backfill_batch_size` | `200` / `500` | files claimed per run |
 | `kv_*` | secret names | Key Vault pointers (never secrets themselves) |
@@ -287,7 +287,7 @@ detection, but is intentionally **not** a field on the Search index.)
      chunking where `pageOverlapLength` is 0). A page longer than `chunk_size` chars is split into
      multiple non-overlapping chunks that keep the same page number (safety cap for embedding limits).
   7. Embed via Azure OpenAI.
-  8. Push chunks (+ `allowed_groups`, `chunk_strategy_version`) to Search.
+  8. Push chunks (+ `allowed_groups`/`allowed_users`, `chunk_strategy_version`) to Search.
   9. Update `ingestion_state`, write `ingestion_log`, set `complete`.
 - **Errors:** increment `retry_count`; ≥ `max_retries` → `dead_letter` + `skipped_log`; else `error`.
 - **Parallelism & durability:** two-phase — network-heavy work (DI/embed/Search) fans out in a
@@ -299,8 +299,8 @@ detection, but is intentionally **not** a field on the Search index.)
 ### 7.4 `nb_pipeline_03_acl_reconcile` (run after editing `acls.json`)
 **Purpose:** keep security trimming in sync with ACL changes **without** re-running Doc Intelligence
 or embeddings. For each `complete` file whose freshly-resolved `acl_version` differs from the value
-in `ingestion_state`, merge-patch only the `allowed_groups` field on that file's existing Search
-chunks and update the stored `acl_version`.
+in `ingestion_state`, merge-patch the `allowed_groups` **and** `allowed_users` fields on that file's
+existing Search chunks and update the stored `acl_version`.
 
 ---
 
@@ -324,7 +324,7 @@ Runs `nb_pipeline_02_ingest_to_index` (index must exist via `nb_setup_03`). **Sc
 initial load, set `backfill_mode=true` and let it run repeatedly until the queue drains.
 
 ### Maintenance — ACL Reconcile (on-demand)
-Run `nb_pipeline_03_acl_reconcile` after editing `acls.json` to re-stamp `allowed_groups` on already-indexed
+Run `nb_pipeline_03_acl_reconcile` after editing `acls.json` to re-stamp `allowed_groups`/`allowed_users` on already-indexed
 content without re-ingesting. Optionally add it as a scheduled step if ACLs change frequently.
 
 **Recommended orchestration:** one pipeline `pl_ingest` = [`nb_pipeline_01_metadata_delta` → `nb_pipeline_02_ingest_to_index`]
