@@ -105,19 +105,36 @@ Real values live solely in the Fabric `config` Delta table:
 
 ## End-to-end test
 
-`scripts/run_e2e_test.ps1` runs a repeatable, self-asserting end-to-end test:
+`scripts/run_e2e_test.ps1` runs a repeatable, self-asserting end-to-end test.
 
-1. Uploads `config/acls.json` to OneLake and seeds ~100 generated docs (mix of 1/2/3-page PDFs, a few
-   txt/docx) under `testset/**/e2e/` in S3 — **additive**; pre-existing `testset/` objects are never
-   touched.
+**The test corpus exercises every supported file type** (not just PDFs) so extraction is verified
+across all of them. The seeder generates **106 deterministic files** (98 ingested; 8 under
+`engineering/` are intentionally skipped to prove the no-ACL path):
+
+| File type | Count | Notes |
+| --- | --- | --- |
+| PDF (`.pdf`) | 94 | 1/2/3-page, each page carrying a `[pN` marker for page-coverage assertions |
+| Text (`.txt`) | 5 | plain-text read path |
+| Word (`.docx`) | 2 | author read from `docProps/core.xml` and asserted in the index |
+| PowerPoint (`.pptx`) | 1 | Document Intelligence extraction |
+| Excel (`.xlsx`) | 1 | Document Intelligence extraction |
+| HTML (`.html`, `.htm`) | 2 | one of each extension |
+| Markdown (`.md`) | 1 | text read path |
+
+Every non-PDF type lives under `finance/policies` so the verify can assert **per-type extraction
+quality** (a known content marker is found in the index for each type). What the test does:
+
+1. Uploads `config/acls.json` to OneLake and seeds the corpus above under `testset/**/e2e/` in S3 —
+   **additive**; pre-existing `testset/` objects are never touched.
 2. `nb_ops_02_reset_clean` wipes Delta tables + the Search index.
 3. `nb_pipeline_01 → nb_pipeline_02` ingest (baseline), then `nb_ops_03_e2e_verify PHASE=baseline`.
 4. Mutates the corpus (modify 2, add 1, delete 1), `nb_pipeline_01 → nb_pipeline_02` again, then
    `nb_ops_03_e2e_verify PHASE=incremental`.
 
 `nb_ops_03` asserts (PASS/FAIL): index↔`ingestion_state` reconciliation, **full page coverage** (every
-source page represented, with the `[pN` marker on page *N*), **security trimming** per Entra group and per direct user,
-and **only-changes-reprocessed** on the incremental pass. Results are written to
+source page represented, with the `[pN` marker on page *N*), **per-type extraction quality** (each
+supported file type present with its content marker extracted), **security trimming** per Entra group
+and per direct user, and **only-changes-reprocessed** on the incremental pass. Results are written to
 `Files/_diag/e2e_result.json`. The seed reconciles the corpus to a canonical state each run, so it is
 fully repeatable. Manage the corpus directly with `scripts/e2e_testdata.py {seed|mutate|cleanup}`.
 
