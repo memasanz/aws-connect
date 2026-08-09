@@ -6,7 +6,8 @@ about **45–60 minutes** for a first run.
 
 By the end you'll have documents from an S3 bucket ingested into an Azure AI Search index,
 chunked by page, embedded for vector search, and stamped with folder-based permissions
-(`allowed_groups`) so your app can security-trim results per user.
+(`allowed_groups`, plus optional direct per-user grants in `allowed_users`) so your app can
+security-trim results per user.
 
 ---
 
@@ -17,7 +18,7 @@ chunked by page, embedded for vector search, and stamped with folder-based permi
    (your docs)        │                          │
                       ▼                          ▼
               nb_pipeline_02 (ingest): Document Intelligence → chunk by page →
-              Azure OpenAI embeddings → Azure AI Search index (with allowed_groups)
+              Azure OpenAI embeddings → Azure AI Search index (with allowed_groups + allowed_users)
                       │
               nb_pipeline_03 (acl_reconcile): re-stamp permissions when acls.json changes
 ```
@@ -266,4 +267,3 @@ Want proof the whole thing works before trusting it? The repo ships a self-check
 - **Config defaults / template:** `nb_setup_01_bootstrap` (inline `DEFAULT_CONFIG`), `notebooks/nb_setup_02_set_config.ipynb`
 - **ACL example:** `config/acls.example.json`
 - **Architecture & data model:** `PRODUCT_SPEC.md`
-- **Change history:** `PROGRESS.md`

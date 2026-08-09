@@ -13,11 +13,10 @@ Tooling and a Microsoft Fabric solution for ingesting files from an Amazon S3 bu
 | --- | --- |
 | `SETUP.md` | **Start here** — end-to-end setup guide for a new workspace |
 | `PRODUCT_SPEC.md` | Full product specification for the Fabric S3 → AI Search ingestion solution |
-| `PROGRESS.md` | Live build status / changelog (updated as work proceeds) |
 | `s3_pdf_demo.ipynb` | Standalone demo: connect to S3 with boto3, read a PDF, inspect metadata |
-| `s3-rw-policy.json` | Example least-privilege IAM policy (read/write, single bucket) |
 | `requirements.txt` | Python deps for the local demo (`boto3`, `jupyter`, `pypdf`) |
 | `notebooks/` | Fabric notebooks — see the notebook table below |
+| `scripts/` | Developer & test tooling (headless notebook runner, E2E harness) — see [`scripts/README.md`](scripts/README.md) |
 | `config/` | Example `acls.json` and `config` defaults |
 
 ## Fabric notebooks
